@@ -96,7 +96,7 @@ First bug reports will come from here — don't wait for the right process to be
 - [ ] Understand the structure: modules, services, core entities and their relationships
 - [ ] Find the most frequently changed files (`git log --stat`) — unstable zones
 - [ ] Find external integrations: payments, email, auth
-- [ ] Look at the CI/CD config: what's being checked automatically right now
+- [ ] Look at CI/CD: what's already automated, what's not — gaps are the first automation targets
 
 **AI-first:**
 - Find job queues and generation workers
@@ -107,7 +107,7 @@ First bug reports will come from here — don't wait for the right process to be
 
 - [ ] List all endpoints by group (auth, billing, core features)
 - [ ] Mark the critical ones — without which the product doesn't work
-- [ ] Find non-obvious or poorly documented fields
+- [ ] Note poorly documented fields and cross-check with git history: actively changed = worth testing; untouched for months = likely deprecated, lower priority
 
 **AI-first:**
 - Map async endpoints separately: job submit, status check, result retrieval, webhooks
