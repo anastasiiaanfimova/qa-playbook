@@ -1,223 +1,223 @@
-# QA Onboarding: Старт на новом проекте
+# QA Onboarding: Starting on a New Project
 
-Шаблон для первого QA на проекте без тестов и процессов.
-Ориентирован на AI-first продукты (генерация, async pipelines, LLM-интеграции).
-
----
-
-## Принципы
-
-- **Риск прежде всего.** Тестируем то, что критично для бизнеса и пользователей — не всё подряд.
-- **Свежий взгляд — невозобновляемый ресурс.** Исследовательское тестирование начинается в первые дни. Через месяц замыливается.
-- **Документация живёт только если её легко обновить.** Одна актуальная страница ценнее десяти устаревших.
-- **Процесс важнее покрытия.** Регулярный регресс с 50 кейсами ценнее 500 кейсов без процесса.
+A template for the first QA on a project with no tests and no processes.
+Focused on AI-first products — generation flows, async pipelines, LLM integrations.
 
 ---
 
-## Онбординг
+## Principles
 
-### Доступы — запросить в первый день
+- **Risk first.** Test what matters for the business and users — not everything.
+- **Fresh eyes are a one-time resource.** Exploratory testing starts in the first few days. After a month you stop noticing things.
+- **Docs only survive if they're easy to update.** One current page beats ten outdated ones.
+- **Process over coverage.** A regular regression with 50 cases beats 500 cases with no process.
 
-- [ ] Staging / dev окружение + тестовые аккаунты (разные тарифы и роли)
-- [ ] Репозиторий
+---
+
+## Onboarding
+
+### Access — request on day one
+
+- [ ] Staging / dev environment + test accounts (different plans and roles)
+- [ ] Repository
 - [ ] Jira
-- [ ] TMS — договориться о выборе (Qase, TestRail и т.п.)
+- [ ] TMS — agree on a choice (Qase, TestRail, etc.)
 - [ ] Swagger / API docs
-- [ ] Notion / Confluence / другая документация
-- [ ] CI/CD — хотя бы read-only
-- [ ] Логи и мониторинг (Sentry, Datadog, Kibana, etc.)
-- [ ] Менеджер очередей (Redis, RabbitMQ, etc.) — хотя бы read-only
-- [ ] База данных — хотя бы read-only на staging
+- [ ] Notion / Confluence / whatever they use for docs
+- [ ] CI/CD — at least read-only
+- [ ] Logs and monitoring (Sentry, Datadog, Kibana, etc.)
+- [ ] Queue manager (Redis, RabbitMQ, etc.) — at least read-only
+- [ ] Database — at least read-only on staging
 
-### Разговор с продактом — бизнес-риски
+### Talk to product — business risks
 
-- [ ] Что самое важное для пользователя? Без чего он уйдёт?
-- [ ] Какие фичи используются больше всего?
-- [ ] На что жалуются пользователи прямо сейчас?
-- [ ] Что нельзя сломать ни при каких обстоятельствах?
-- [ ] Что планируется к релизу в ближайшие 1–2 месяца?
+- [ ] What matters most to users? What would make them leave?
+- [ ] Which features get used the most?
+- [ ] What are users complaining about right now?
+- [ ] What can never break, no matter what?
+- [ ] What's shipping in the next 1–2 months?
 
-### Разговор с разработчиками — технические риски
+### Talk to developers — technical risks
 
-- [ ] Что чаще всего ломается?
-- [ ] Чего боитесь трогать в коде?
-- [ ] Какие части кода менялись последние 2–3 месяца? (= зоны нестабильности)
-- [ ] Есть ли известные баги, которые пока не фиксят?
-- [ ] Какие внешние зависимости критичны и насколько они стабильны?
-- [ ] Как сейчас выглядит релизный процесс?
+- [ ] What breaks most often?
+- [ ] What parts of the code are people afraid to touch?
+- [ ] What's changed in the last 2–3 months? (= unstable zones)
+- [ ] Are there known bugs that aren't being fixed yet?
+- [ ] Which external dependencies are critical and how stable are they?
+- [ ] How does the release process work right now?
 
 **AI-first:**
-- Какие LLM-провайдеры используются?
-- Были ли проблемы с их доступностью или изменением API?
-- Как обрабатываются таймауты и ошибки провайдера?
+- Which LLM providers do you use?
+- Have there been issues with provider availability or API changes?
+- How are timeouts and provider errors handled?
 
-### Поддержка пользователей
+### Support
 
-Источник реальных багов и болей — важно понять как устроена до начала работы.
+Real bugs and user pain live here — understand how support works before you start.
 
-- [ ] Кто собирает фидбэк от пользователей и где он хранится? (Intercom, Zendesk, Telegram, email, etc.)
-- [ ] Есть ли выделенный саппорт или это делают разработчики / продакт?
-- [ ] Куда саппорт пишет при обнаружении проблемы? Как эскалирует критичные баги?
-- [ ] Есть ли доступ к истории обращений? — там часто уже описаны реальные баги
+- [ ] Who collects user feedback and where? (Intercom, Zendesk, Telegram, email, etc.)
+- [ ] Is there dedicated support or does the dev / product team handle it?
+- [ ] Where does support report issues? How are critical bugs escalated?
+- [ ] Is there access to ticket history? — real bugs are usually already described there
 
-### Теневые QA-процессы
+### Shadow QA processes
 
-До появления QA кто-то всё равно проверял — неформально. Найти и не сломать.
+Before QA existed, someone was still checking things — informally. Find it, don't break it.
 
-- [ ] Кто кликает по продукту перед деплоем? Как это происходит?
-- [ ] Есть ли неформальные чеклисты или "надо не забыть проверить X"?
-- [ ] Кто первым узнаёт когда что-то ломается в проде?
-- [ ] Как сейчас принимается решение "можно деплоить"?
+- [ ] Who clicks through the product before a deploy? How does that work?
+- [ ] Are there informal checklists or "don't forget to check X" notes somewhere?
+- [ ] Who's the first to know when something breaks in prod?
+- [ ] How is the "ok to deploy" decision made right now?
 
-→ **Выход:** список "больных мест" с двух сторон (бизнес + техника), понимание теневых процессов, карта саппорта.
+→ **Output:** a list of pain points from both sides (business + tech), understanding of shadow processes, support map.
 
 ---
 
-## Разведка
+## Exploration
 
-Исследовательское тестирование начать в первые дни — до того как взгляд замылится.
+Exploratory testing starts in the first few days — before your eyes adjust.
 
-### Исследовательское тестирование
+### Exploratory testing
 
-- [ ] Пройти продукт глазами нового пользователя — без плана, без сценариев
-- [ ] Фиксировать всё непонятное, неудобное, сломанное без фильтрации
-- [ ] Отмечать UX-проблемы: не только "не работает", но и "работает, но непонятно" или "неудобно"
-- [ ] Записывать вопросы "почему так сделано?" — часть из них окажется багами
+- [ ] Walk through the product as a new user — no plan, no scenarios
+- [ ] Note everything confusing, inconvenient, or broken without filtering
+- [ ] Flag UX issues too: not just "doesn't work" but "works but unclear" or "awkward"
+- [ ] Write down "why is it done this way?" questions — some of them will turn out to be bugs
 
-Первые баг-репорты появятся здесь же — не ждать правильного процесса.
-
-**AI-first:**
-- Пройти полный цикл генерации: отправить задачу, дождаться результата, скачать
-- Зафиксировать сколько времени занимает и понятен ли пользователю статус ожидания
-- Проверить что происходит при ошибке или таймауте генерации
-
-### Анализ репозитория
-
-- [ ] Понять структуру: модули, сервисы, основные сущности и их связи
-- [ ] Найти самые изменяемые файлы (`git log --stat`) — зоны нестабильности
-- [ ] Найти внешние интеграции: платёжка, email, авторизация
-- [ ] Посмотреть CI/CD конфиг: что сейчас проверяется автоматически
+First bug reports will come from here — don't wait for the right process to be in place.
 
 **AI-first:**
-- Найти очереди задач и воркеры генерации
-- Понять логику retry и обработки ошибок провайдера
-- Найти где хранятся и как отдаются медиафайлы
+- Run the full generation cycle: submit a job, wait for the result, download it
+- Note how long it takes and whether the waiting state is clear to the user
+- Check what happens on generation error or timeout
 
-### Анализ Swagger / OpenAPI
+### Repository analysis
 
-- [ ] Выписать все эндпоинты по группам (auth, billing, core features)
-- [ ] Отметить критичные — без которых продукт не работает
-- [ ] Найти неочевидные или слабо задокументированные поля
-
-**AI-first:**
-- Отдельно картировать async-эндпоинты: сабмит задачи, проверка статуса, получение результата, вебхуки
-- Зафиксировать все возможные статусы джоба и переходы между ними
-
-### Анализ существующей документации
-
-- [ ] Найти описание основных user flows
-- [ ] Найти известные ограничения и edge cases
-- [ ] Проверить актуальность — если документы старые, флагировать
-
-### Мониторинг
-
-На небольших проектах мониторинг часто неполный — одна из первых точек роста для QA.
-
-- [ ] Запросить доступ к существующим дашбордам и понять что сейчас мониторится
-- [ ] Выделить что важно с точки зрения QA: error rate, latency, failed jobs, payment errors
-- [ ] Зафиксировать что не мониторится, но должно — это станет отдельной задачей
+- [ ] Understand the structure: modules, services, core entities and their relationships
+- [ ] Find the most frequently changed files (`git log --stat`) — unstable zones
+- [ ] Find external integrations: payments, email, auth
+- [ ] Look at the CI/CD config: what's being checked automatically right now
 
 **AI-first:**
-- Проверить есть ли метрики по генерации: success rate, среднее время, ошибки провайдеров, глубина очереди
-- Если нет — поднять этот вопрос с командой в ближайшее время
+- Find job queues and generation workers
+- Understand retry logic and provider error handling
+- Find where media files are stored and how they're served
 
-→ **Выход:** карта рисков + понимание мониторинга + первые баг-репорты.
+### Swagger / OpenAPI analysis
 
-**Формат карты рисков:**
+- [ ] List all endpoints by group (auth, billing, core features)
+- [ ] Mark the critical ones — without which the product doesn't work
+- [ ] Find non-obvious or poorly documented fields
 
-| Область | Риск | Важность | Автоматизация |
-|---------|------|----------|---------------|
-| Авторизация | Нет доступа к продукту | Critical | Да |
-| Генерация | Core feature не работает | Critical | Частично |
-| Биллинг | Потеря оплаты | Critical | Нет |
-| Лимиты плана | Бесплатный доступ к платным фичам | High | Да |
+**AI-first:**
+- Map async endpoints separately: job submit, status check, result retrieval, webhooks
+- Document all possible job states and transitions between them
+
+### Existing documentation
+
+- [ ] Find descriptions of key user flows
+- [ ] Find known limitations and edge cases
+- [ ] Check if docs are current — if they're old, flag it
+
+### Monitoring
+
+On smaller projects monitoring is often incomplete — one of the first growth areas for QA.
+
+- [ ] Get access to existing dashboards and understand what's being monitored
+- [ ] Identify what matters from a QA perspective: error rate, latency, failed jobs, payment errors
+- [ ] Note what's not monitored but should be — that becomes a separate task
+
+**AI-first:**
+- Check if there are generation metrics: success rate, avg time, provider errors, queue depth
+- If not — raise it with the team soon
+
+→ **Output:** risk map + monitoring picture + first bug reports.
+
+**Risk map format:**
+
+| Area | Risk | Priority | Automation |
+|------|------|----------|------------|
+| Auth | No access to the product | Critical | Yes |
+| Generation | Core feature doesn't work | Critical | Partial |
+| Billing | Lost payment | Critical | No |
+| Plan limits | Free access to paid features | High | Yes |
 
 ---
 
-## Документация
+## Documentation
 
-Писать только то, что реально будут использовать. Документ, который сложно обновить, перестанет обновляться.
+Write only what people will actually use. A doc that's hard to update will stop being updated.
 
-### Запросить у команды
+### Request from the team
 
-- [ ] Описание user flows для ключевых фич (если нет — составить самому по итогам разведки и согласовать)
-- [ ] Описание релизного процесса: как деплоят, как часто, кто принимает решение
-- [ ] Что сейчас мониторится: алерты, дашборды, on-call
+- [ ] User flow descriptions for key features (if missing — write them yourself after exploration and get them reviewed)
+- [ ] Release process description: how they deploy, how often, who decides
+- [ ] What's currently monitored: alerts, dashboards, on-call
 
 **AI-first:**
-- Согласовать технические критерии приёмки генерации — обязательно до написания тестов
-- Договориться что такое "успешный результат": форматы файлов, допустимые размеры, максимальное время, коды ошибок
-- Без этого ручное тестирование субъективно, автоматизация невозможна
+- Agree on acceptance criteria for generation — before writing any tests
+- Define what a "successful result" means: file formats, allowed sizes, max time, error codes
+- Without this, manual testing is subjective and automation is impossible
 
-### Создать
+### Create
 
-- [ ] **Тест-стратегия** (1–2 страницы): что тестируем, что не тестируем и почему, подход к приоритизации рисков
-- [ ] **Карта рисков** (из раздела Разведка)
-- [ ] **Гайд по тест-окружению**: как получить доступ, какие аккаунты использовать, особенности staging
-- [ ] **Архитектура хранения тест-кейсов**: структура разделов в TMS, формат чеклистов, связь с Jira
+- [ ] **Test strategy** (1–2 pages): what we test, what we don't and why, how we prioritize risks
+- [ ] **Risk map** (from Exploration)
+- [ ] **Environment guide**: how to get access, which accounts to use, staging quirks
+- [ ] **Test case storage structure**: folder structure in TMS, checklist format, Jira linking
 
 ---
 
-## Тест-кейсы и чеклисты
+## Test Cases and Checklists
 
-Формат: чеклисты с комментариями — не пошаговые инструкции. Пошаговые детали дорого поддерживать и быстро устаревают.
+Format: checklists with comments — not step-by-step instructions. Step-by-step details are expensive to maintain and go stale fast.
 
-### Подход
+### Approach
 
-- Писать по карте рисков: Critical → High → Medium
-- На каждую область: что проверяем + на что обратить особое внимание
-- При изменении фичи — сразу обновить связанные чеклисты
-- Устаревшие кейсы архивировать, не копить мусор
+- Write against the risk map: Critical → High → Medium
+- For each area: what we check + what to pay special attention to
+- When a feature changes — update the related checklists right away
+- Archive outdated cases, don't let them pile up
 
-### Пример структуры чеклиста
+### Checklist example
 
 ```
-## Генерация изображений
+## Image generation
 
-- [ ] Успешный цикл — проверить формат, размер и доступность файла
-- [ ] Ошибка провайдера — сообщение пользователю понятное, джоб не завис
-- [ ] Таймаут — статус обновляется, пользователь уведомлён
-- [ ] Невалидный промпт — обработка на уровне валидации, не падает с 500
-- [ ] Повторный запрос после ошибки — работает без перезагрузки страницы
+- [ ] Successful cycle — check format, size, and file accessibility
+- [ ] Provider error — user message is clear, job didn't get stuck
+- [ ] Timeout — status updates, user is notified
+- [ ] Invalid prompt — handled at validation level, doesn't 500
+- [ ] Retry after error — works without a page reload
 ```
 
-### Регресс и smoke
+### Regression and smoke
 
-Определяется параллельно с написанием чеклистов — не отдельный этап.
+Defined alongside writing checklists — not a separate phase.
 
-- [ ] При написании чеклиста сразу помечать что входит в smoke (самое критичное, быстро)
-- [ ] Выделить набор для релизного регресса (Critical + High)
-- [ ] Ориентир: ручной регресс ≤ 4 часов, smoke ≤ 30 минут
-- [ ] Фиксировать результат каждого прогона: дата, версия, passed/failed, найденные баги
+- [ ] While writing a checklist, mark what goes into smoke (most critical, fast to run)
+- [ ] Define a regression set for releases (Critical + High)
+- [ ] Target: manual regression ≤ 4 hours, smoke ≤ 30 minutes
+- [ ] Log each run: date, version, passed/failed, bugs found
 
 **AI-first:**
-- В релизный регресс включить полный цикл генерации на staging с реальным провайдером
+- Include a full generation cycle on staging with a real provider in release regression
 
 ---
 
-## Автоматизация
+## Automation
 
-Детали прорабатываются отдельно — здесь только план и ключевые чекпоинты.
+Details are worked out separately — just the plan and key checkpoints here.
 
-- [ ] Настроить фреймворк под стек проекта
-- [ ] Smoke suite: автоматизировать самые критичные пути, запуск за < 5 минут
-- [ ] Подключить smoke к CI/CD на каждый деплой в staging
-- [ ] Расширять покрытие по карте рисков: сначала API, потом E2E golden paths
-- [ ] Нагрузочные тесты для критичных async flows — отдельная итерация
+- [ ] Set up a framework for the project's stack
+- [ ] Smoke suite: automate the most critical paths, runs in < 5 minutes
+- [ ] Connect smoke to CI/CD on every staging deploy
+- [ ] Expand coverage by risk map: API first, then E2E golden paths
+- [ ] Load tests for critical async flows — a separate iteration
 
-Автоматизировать только устоявшийся функционал. Активно меняющийся код = постоянно сломанные тесты.
+Only automate stable functionality. Actively changing code = constantly broken tests.
 
 **AI-first:**
-- Мокировать LLM-провайдеров на уровне HTTP-транспорта — реальные вызовы в CI дорогие и нестабильные
-- Написать хелперы для async-паттерна: `submit_job → poll_status → assert_result`
-- Нагрузочные тесты в первую очередь на job queue: параллельные сабмиты, saturation point, деградация времени генерации под нагрузкой
+- Mock LLM providers at the HTTP transport level — real calls in CI are expensive and flaky
+- Write helpers for the async pattern: `submit_job → poll_status → assert_result`
+- Load tests first on the job queue: concurrent submissions, saturation point, generation time degradation under load
