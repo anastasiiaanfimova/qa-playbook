@@ -6,7 +6,7 @@ Focused on the scenario where you are the **first QA on the team**, starting fro
 
 ## What's inside
 
-### `qa-onboarding-template.md` *(in Russian)*
+### `qa-onboarding-template.md`
 
 A practical onboarding checklist for the first QA on a project without tests or processes. Covers:
 
