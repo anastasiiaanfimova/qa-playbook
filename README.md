@@ -81,6 +81,7 @@ MCP tool names follow the pattern `mcp__<toolname>__<action>` — replace `<tool
 | `bug-dig` | Investigates a bug or error monitoring issue: confirms whether it's a real user-impacting bug, monitoring noise, or theoretical risk. Collects evidence across `<error-monitoring>`, `<logs>`, `<analytics>`, git log, `<wiki>`, and code. Writes verdict to Bug Candidates `<wiki>` DB; never auto-creates `<task-tracker>` tasks. |
 | `refresh-git` | Pulls latest from main for all configured repos and rebuilds code-review-graph indexes. Run at the start of a session before code analysis or QA work. |
 | `qa-tooling` | Tooling audit: reads MemPalace diary across recent sessions (last 14 days), identifies recurring pain points and manual steps, and suggests new skills, agents, or automations to build. Focused on "what should we build next?" — not a session summary. |
+| `daily` | Writes today's daily log based on the current conversation and pushes it to your QA notes repository. Asks before writing if anything is unclear. Not QA-specific — useful for any work log. |
 
 ---
 
