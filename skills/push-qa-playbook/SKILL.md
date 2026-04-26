@@ -113,36 +113,76 @@ print(text, end='')
 
 ### Step 2 — Diff and copy skills
 
-For each name in **PUBLIC_QA_SKILLS** (from Config above):
+Read PUBLIC_QA_SKILLS and PUBLIC_QA_AGENTS from Config above and build arrays using this template (substitute names from Config, space-separated). Define both here — reuse in Steps 2b and 2c:
 
 ```bash
-src="$HOME/.claude/skills/$name/SKILL.md"
-dest="/tmp/qa-playbook/skills/$name/SKILL.md"
-[ -f "$src" ] || { echo "WARNING: $src not found, skipping"; continue; }
-mkdir -p "$(dirname "$dest")"
-python3 /tmp/qa-anon.py < "$src" > /tmp/skill_anon.md
-diff /tmp/skill_anon.md "$dest" > /dev/null 2>&1 || cp /tmp/skill_anon.md "$dest"
+PUBLIC_QA_SKILLS=(<names from Config>)
+PUBLIC_QA_AGENTS=(<names from Config>)
+```
+
+Iterate over skills:
+
+```bash
+for name in "${PUBLIC_QA_SKILLS[@]}"; do
+  src="$HOME/.claude/skills/$name/SKILL.md"
+  dest="/tmp/qa-playbook/skills/$name/SKILL.md"
+  [ -f "$src" ] || { echo "WARNING: $src not found, skipping"; continue; }
+  mkdir -p "$(dirname "$dest")"
+  python3 /tmp/qa-anon.py < "$src" > /tmp/skill_anon.md
+  if [ ! -f "$dest" ]; then
+    cp /tmp/skill_anon.md "$dest"
+    echo "NEW: $name"
+  elif ! diff -q /tmp/skill_anon.md "$dest" > /dev/null 2>&1; then
+    cp /tmp/skill_anon.md "$dest"
+    echo "CHANGED: $name"
+  fi
+done
 ```
 
 ### Step 2b — Diff and copy agents
 
-Agents don't need anonymization — for each name in **PUBLIC_QA_AGENTS** (from Config above), copy directly:
+Agents don't need anonymization (reuse `$PUBLIC_QA_AGENTS` from Step 2):
 
 ```bash
-src="$HOME/.claude/agents/$name.md"
-dest="/tmp/qa-playbook/agents/$name.md"
-[ -f "$src" ] || { echo "WARNING: $src not found, skipping"; continue; }
-diff "$src" "$dest" > /dev/null 2>&1 || cp "$src" "$dest"
+for name in "${PUBLIC_QA_AGENTS[@]}"; do
+  src="$HOME/.claude/agents/$name.md"
+  dest="/tmp/qa-playbook/agents/$name.md"
+  [ -f "$src" ] || { echo "WARNING: $src not found, skipping"; continue; }
+  mkdir -p "$(dirname "$dest")"
+  if [ ! -f "$dest" ]; then
+    cp "$src" "$dest"
+    echo "NEW: $name"
+  elif ! diff -q "$src" "$dest" > /dev/null 2>&1; then
+    cp "$src" "$dest"
+    echo "CHANGED: $name"
+  fi
+done
 ```
 
 ### Step 2c — Remove stale files from repo
 
-Delete any skill dir in `/tmp/qa-playbook/skills/` whose name is **not** in PUBLIC_QA_SKILLS.
-Delete any agent file in `/tmp/qa-playbook/agents/` whose name (without `.md`) is **not** in PUBLIC_QA_AGENTS.
+Delete skill dirs and agent files not in the arrays (reuse arrays from Step 2):
 
 ```bash
-git -C /tmp/qa-playbook rm -r "skills/$name"      # for each stale skill
-git -C /tmp/qa-playbook rm "agents/$name.md"       # for each stale agent
+for dir in /tmp/qa-playbook/skills/*/; do
+  skill_name=$(basename "$dir")
+  found=0
+  for s in "${PUBLIC_QA_SKILLS[@]}"; do [ "$s" = "$skill_name" ] && found=1 && break; done
+  if [ $found -eq 0 ]; then
+    git -C /tmp/qa-playbook rm -r "skills/$skill_name"
+    echo "DELETED stale skill: $skill_name"
+  fi
+done
+
+for f in /tmp/qa-playbook/agents/*.md; do
+  agent_name=$(basename "$f" .md)
+  found=0
+  for a in "${PUBLIC_QA_AGENTS[@]}"; do [ "$a" = "$agent_name" ] && found=1 && break; done
+  if [ $found -eq 0 ]; then
+    git -C /tmp/qa-playbook rm "agents/$agent_name.md"
+    echo "DELETED stale agent: $agent_name"
+  fi
+done
 ```
 
 ### Step 2d — Privacy scan
@@ -238,5 +278,6 @@ git -C /tmp/qa-playbook log --oneline -1
 - **Agents are NOT anonymized** — they're generic and have no private tool references.
 - Uses `/tmp/qa-anon.py` (not `/tmp/anon.py`) to avoid conflicts with push-claude-config runs.
 - `replacements.md` is **local-only** — it's never synced to qa-playbook.
-- To add a skill or agent: update the relevant list in **Config** above — that's the single source of truth. Steps 2, 2b, and 2c all derive from it.
+- To add a skill: update **PUBLIC_QA_SKILLS** in Config above — that's the only place to edit. Step 2 reads the list from there at runtime.
+- To add an agent: update **PUBLIC_QA_AGENTS** in Config above — same rule.
 - Before adding an agent to PUBLIC_QA_AGENTS: verify it has no private references first (grep for product names).
