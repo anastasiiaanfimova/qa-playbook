@@ -55,7 +55,7 @@ Skills reference your specific toolstack via placeholders. Before use, replace t
 | Placeholder | Meaning | Examples |
 |---|---|---|
 | `<product>` | Your product name | MyApp, Acme |
-| `<tms>` | Test management system | Testiny, TestRail, Qase |
+| `<tms>` | Test management system | TestRail, Qase, Zephyr |
 | `<analytics>` | Product analytics | Amplitude, Mixpanel, PostHog |
 | `<error-monitoring>` | Error monitoring | Sentry, Rollbar, Bugsnag |
 | `<metrics>` | Metrics / dashboards | Grafana, Datadog |

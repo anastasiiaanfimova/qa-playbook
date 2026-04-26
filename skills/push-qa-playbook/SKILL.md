@@ -225,12 +225,10 @@ git -C /tmp/qa-playbook log --oneline -1
 ### Step 6 — Write diary entry
 
 `mcp__mempalace__mempalace_diary_write` with compact AAAK entry:
-- Which files changed (skills / agents)
-- Commit hash
-- Any anonymizations applied (e.g. "replaced <product>×5")
-- Whether README was updated
-
-Topic: `qa-playbook.sync`
+- `agent_name`: `"claude"`
+- `wing`: `"wing_claude-<product>"`
+- `topic`: `"qa-playbook.sync"`
+- `entry`: include — which files changed (skills / agents), commit hash, anonymizations applied (e.g. "replaced <product>×5"), whether README was updated
 
 ---
 
