@@ -11,11 +11,7 @@ version: 0.1.0
 
 # TC Update — <product> <tms>
 
-Update existing test cases in `<tms>`. Handles etag automatically — the user never needs to think about it.
-
-## Configuration
-
-Replace `<tms>` with your test management system name and `mcp__<tms>__<tms>_*` with your actual MCP tool names. See `../tc-create/references/<tms>-api.md` for folder IDs.
+Update existing test cases in <tms>. Handles etag automatically — the user never needs to think about it.
 
 ## Hard Rules
 
@@ -29,11 +25,11 @@ Replace `<tms>` with your test management system name and `mcp__<tms>__<tms>_*` 
 
 | Operation | Example trigger |
 |---|---|
-| Bulk field update | "all TCs in the Auth folder → set type=SMOKE" |
-| Folder move | "move TC-42 and TC-55 to Billing folder" |
-| Steps / content edit | "update steps for TC-38" |
-| Rename | "rename TC-71 to 'Payment Failed: provider=stripe'" |
-| Mixed | "change priority and move to folder" |
+| Bulk field update | "всем кейсам в папке Auth поставь type=SMOKE" |
+| Folder move | "перемести TC-42 и TC-55 в папку Billing" |
+| Steps / content edit | "обнови шаги у TC-38" |
+| Rename | "переименуй TC-71 в 'Payment Failed: provider=stripe'" |
+| Mixed | "поменяй приоритет и перемести в папку" |
 
 ---
 
@@ -63,17 +59,17 @@ Carry forward per TC: `id`, `status`, `title`, current field values. Etag is han
 
 For each ACTIVE TC in the target set:
 ```
-⚠️ TC-{id} "{title}" has status ACTIVE.
-Planned change: {field} → {new_value}
+⚠️ TC-{id} "{title}" имеет статус ACTIVE.
+Планируемое изменение: {field} → {new_value}
 
-Apply to this TC? (yes / skip)
+Применить к этому кейсу? (да / пропустить)
 ```
 Wait for answer per ACTIVE TC before continuing.
 
 ### Step 4 — Show plan, wait for confirmation
 
 ```
-Updating N TCs:
+Обновляю N TC:
 
   TC-{id} "{title}" [{status}]
     {field}: {old} → {new}
@@ -81,9 +77,9 @@ Updating N TCs:
   TC-{id} "{title}" [{status}]
     ...
 
-  ⏭ TC-{id} "{title}" — skipped (ACTIVE, user declined)
+  ⏭ TC-{id} "{title}" — пропущен (ACTIVE, пользователь отказался)
 
-Confirm?
+Подтверждаешь?
 ```
 
 Only proceed after explicit yes.
@@ -115,10 +111,10 @@ Folder IDs: see `../tc-create/references/<tms>-api.md`.
 ### Step 6 — Report results
 
 ```
-Done:
-  ✅ TC-{id} "{title}" — updated
+Готово:
+  ✅ TC-{id} "{title}" — обновлён
   ✅ ...
-  ❌ TC-{id} — error: {http_error}
+  ❌ TC-{id} — ошибка: {http_error}
 ```
 
 If any errors — show raw error response, don't silently skip.

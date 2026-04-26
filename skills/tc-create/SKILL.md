@@ -4,33 +4,19 @@ description: >-
   This skill should be used when the user asks to "create a test case",
   "write a TC", "add a test case", "добавь кейс", "создай тест-кейс",
   "напиши кейс" for <product> in <tms>. Handles naming conventions,
-  priority assignment, step format, and TMS MCP creation.
+  priority assignment, step format, and <tms> MCP creation.
   Also supports bulk mode: creating multiple TCs at once with duplicate checking.
 version: 0.3.0
 ---
 
 # TC Create — <product> <tms>
 
-Create test cases in `<tms>` for `<product>` following established conventions.
-All data must come from a real source (`<analytics>`, code, `<metrics>`). Never invent steps or property values.
+Create test cases in <tms> for <product> following established conventions.
+All data must come from a real source (<analytics>, code, <metrics>). Never invent steps or property values.
 
 Supports two modes:
 - **Single** — one TC, interactive, step by step (default)
 - **Bulk** — list of TCs, with duplicate check before creating
-
-## Configuration
-
-Replace these placeholders before use:
-
-| Placeholder | What to set |
-|---|---|
-| `<product>` | Your product name |
-| `<tms>` | Your test management system name (e.g. Testiny, TestRail, Qase) |
-| `<analytics>` | Your analytics tool (e.g. Amplitude, Mixpanel, PostHog) |
-| `<metrics>` | Your metrics/observability tool (e.g. Grafana, Datadog) |
-| `<error-monitoring>` | Your error monitoring tool (e.g. Sentry, Rollbar) |
-| `mcp__<tms>__<tms>_*` | Replace with your actual MCP tool names |
-| `references/<tms>-api.md` | Create this file with your TMS folder IDs |
 
 ## MCP Tools Used
 
@@ -117,46 +103,46 @@ After creation, update `references/<tms>-api.md` with any new folder IDs.
 ## Single Mode Workflow
 
 **Step 1 — Clarify if not provided:**
-- Which project: Web, Back, or Admin? (configure your project IDs in `references/<tms>-api.md`)
+- Which project: Web (id=1), Back (id=2), or Admin (id=3)?
 - Which folder? (see `references/<tms>-api.md` for folder IDs)
 - What is the data source? Options:
-  - **`<analytics>`** — event name, properties, volume (`mcp__<analytics>__search`)
+  - **<analytics>** — event name, properties, volume (`mcp__Amplitude__search`)
   - **Code** — backend handler or frontend tracking file
-  - **`<metrics>`** — logs, metrics, error traces (`mcp__<metrics>__*`)
-  - **`<error-monitoring>`** — specific error/exception details (`mcp__<error-monitoring>__list_issues`, `mcp__<error-monitoring>__list_events`)
+  - **<metrics>** — logs, metrics, error traces (`mcp__grafana__*`)
+  - **<error-monitoring>** — specific error/exception details (`mcp__sentry__list_issues`, `mcp__sentry__list_events`)
 
 **Step 2 — Choose title pattern** (pick one based on TC type):
 
 | Type | Pattern | Example |
 |---|---|---|
-| Analytics event + property | `EventName: property=value` | `Job Created: type=<job_type>` |
-| Negative / edge case | `condition → consequence` | `balance=0 → Job Created doesn't fire` |
-| UI behavior / backend logic | `Object: short description` | `Promote User: requires confirmation` |
+| <analytics> event + property | `EventName: property=value` | `Task Created: type=videogen` |
+| Negative / edge case | `condition → consequence` | `credits=0 → Task Created не стреляет` |
+| UI behavior / backend logic | `Object: short description` | `Promote Trusted: требует подтверждения` |
 
 Rules:
 - Never repeat the folder name in the title
-- No fluff words: no "Successful", "Correct", "Happy path" as prefix
-- Analytics data (event names, properties, values) in English with `property=value` notation
-- Descriptive part in your team's language
+- No fluff words: no "Успешная", "Корректная", "Понятная", no "happy path" as prefix
+- <analytics> data (event names, properties, values) in English with `property=value` notation
+- Descriptive part in Russian
 
-**Step 3 — Set priority** based on analytics event volume or criticality:
+**Step 3 — Set priority** based on <analytics> event volume or criticality:
 
-| Priority | Analytics volume /30d | API value |
+| Priority | <analytics> volume /30d | API value |
 |---|---|---|
 | HIGH | >50 000 or critical path | 1 |
 | MEDIUM | 5 000–50 000 or important edge case | 2 |
 | LOW | <5 000 or rare scenario | 3 |
 
 **Step 4 — Set status:**
-- `GUESS` — source confirmed (code/analytics), but steps not verified hands-on. Default for gap-report TCs.
+- `GUESS` — source confirmed (code/<analytics>), but steps not verified hands-on. Default for gap-report TCs.
 - `DRAFT` — steps partially verified, work in progress.
-- `ACTIVE` — every step verified from a real source (code, analytics query, metrics), nothing assumed. Only set ACTIVE on explicit user request.
+- `ACTIVE` — every step verified from a real source (code, <analytics> query, <metrics>), nothing assumed. Only set ACTIVE on explicit user request.
 
 When in doubt — always GUESS.
 
 **Step 5 — Write steps.** Format: one step per line, `action → expected result`.
-- Action: imperative ("Open task", "Click Retry")
-- Expected: what should happen ("credits returned", "HTTP 200")
+- Action: imperative ("Открыть задачу", "Нажать Retry")
+- Expected: what should happen ("credits возвращены", "HTTP 200")
 - Never invent UI button names or page names not seen in code
 
 **Step 6 — Create via MCP:**
@@ -197,4 +183,4 @@ Etag is fetched automatically — no manual etag management needed.
 ## Additional Resources
 
 - **`references/<tms>-api.md`** — folder IDs per project, valid enum values
-- **`<error-monitoring>` MCP** — use `mcp__<error-monitoring>__list_issues` / `mcp__<error-monitoring>__list_events` to verify real error messages and stack traces when writing steps for error-path TCs
+- **<error-monitoring> MCP** — use `mcp__sentry__list_issues` / `mcp__sentry__list_events` to verify real error messages and stack traces when writing steps for error-path TCs

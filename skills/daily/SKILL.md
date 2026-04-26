@@ -1,73 +1,50 @@
 ---
 name: daily
 description: >-
-  Write today's daily log and push it to your QA notes repository.
-  Trigger: "/daily", "write daily", "daily log", "напиши дейли", "дейли за сегодня".
+  Write today's daily log for the <your-qa-repo> repository.
+  Trigger: "/daily", "напиши дейли", "дейли за сегодня", "daily log".
 version: 0.1.0
 ---
 
-# /daily — write today's daily log
+# /daily — написать daily-лог
 
-Write a concise daily log based on today's conversation and push it to your notes repository.
+Помоги написать daily-лог за сегодня для репозитория <your-qa-repo>.
 
-## Configuration
+## Правила стиля
 
-Set these before use:
+- Максимально кратко и конкретно, от первого лица
+- Claude — инструмент, не автор. Не приписывай ему работу
+- Не упоминать QA-репозиторий и всё с ним связанное
+- Не упоминать TMS и инструменты тестировщика, если они не всплывали в разговоре сегодня
+- Не брать пункты из qa playbook, если они не обсуждались сегодня
+- В плане на завтра — sub-notes под каждым пунктом, если есть уточнения
 
-| What | Where |
-|---|---|
-| Target repository | Clone to `/tmp/<your-qa-repo>/`, set remote to your repo URL |
-| Output path | `daily/YYYY-MM-DD.md` inside the cloned repo |
+## Структура файла
 
-## Style rules
-
-- Brief and specific, written in first person
-- Claude is a tool, not the author — don't attribute work to it
-- Don't mention the QA repository or tooling internals unless they came up in the conversation today
-- Don't pull items from a QA checklist or playbook if they weren't discussed today
-- For tomorrow's plan — add sub-notes under each item if there are specifics
-
-## File structure
-
-```markdown
+```
 # Daily — YYYY-MM-DD
 
-## Done
+## Что сделала
 
 - ...
 
-## Blockers
+## Блокеры
 
 - ...
 
-## Tomorrow
+## План на завтра
 
 - [ ] ...
   → ...
 ```
 
-## Process
+## Процесс
 
-1. Review today's conversation and extract what was actually done
-2. If anything is unclear or uncertain — **ask first** before writing:
-   - Should this action be mentioned?
-   - How to phrase it more precisely?
-   - Are there blockers or tomorrow's plans you don't know about?
-3. After clarifications — write the file to `/tmp/<your-qa-repo>/daily/YYYY-MM-DD.md` and push to GitHub
+1. Посмотри на сегодняшний разговор и выдели, что реально было сделано
+2. Если что-то непонятно или сомневаешься — **спроси меня** прежде чем писать:
+   - Стоит ли упоминать конкретное действие?
+   - Как точнее сформулировать?
+   - Есть ли план на завтра или блокеры, о которых ты не знаешь?
+3. После уточнений — напиши файл `daily/YYYY-MM-DD.md` в `/tmp/<your-qa-repo>/` и запушь в GitHub
 
-Use `currentDate` from context for today's date, or ask.
-
-## Push
-
-```bash
-if [ -d /tmp/<your-qa-repo>/.git ]; then
-  git -C /tmp/<your-qa-repo> pull --rebase --quiet
-else
-  git clone https://github.com/<your-org>/<your-qa-repo> /tmp/<your-qa-repo>
-fi
-
-# write the file, then:
-git -C /tmp/<your-qa-repo> add daily/YYYY-MM-DD.md
-git -C /tmp/<your-qa-repo> commit -m "daily YYYY-MM-DD"
-git -C /tmp/<your-qa-repo> push origin main
-```
+Сегодняшняя дата: используй `currentDate` из контекста или спроси.

@@ -82,6 +82,7 @@ MCP tool names follow the pattern `mcp__<toolname>__<action>` — replace `<tool
 | `refresh-git` | Pulls latest from main for all configured repos and rebuilds code-review-graph indexes. Run at the start of a session before code analysis or QA work. |
 | `qa-tooling` | Tooling audit: reads MemPalace diary across recent sessions (last 14 days), identifies recurring pain points and manual steps, and suggests new skills, agents, or automations to build. Focused on "what should we build next?" — not a session summary. |
 | `daily` | Writes today's daily log based on the current conversation and pushes it to your QA notes repository. Asks before writing if anything is unclear. Not QA-specific — useful for any work log. |
+| `push-qa-playbook` | Syncs local QA skills and agents to this GitHub repo. Diffs local vs repo, anonymizes private tool and product names, commits only changed files. Handles all public skills and agents. Updates README if content changed. |
 
 ---
 

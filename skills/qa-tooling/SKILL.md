@@ -41,7 +41,7 @@ Extract recurring signals from the filtered entries:
 ### Step 2 — Inventory existing skills
 
 ```bash
-ls ~/.claude/skills/
+ls /Users/<user>/.claude/skills/
 ```
 
 For each skill, note: what it does and any known limitations seen in diary.
@@ -63,25 +63,25 @@ For each pain point from Step 1, map to a concrete suggestion:
 ```
 ## QA Tooling — YYYY-MM-DD
 
-### 🔧 Suggest to build / improve
+### 🔧 Предлагаю построить / улучшить
 
-**HIGH — solves a real pain:**
-1. [Skill/tool name] — [what it does, why it's needed]
-   Signal from diary: "[quote or pattern from diary]"
+**HIGH — решает реальную боль:**
+1. [Skill/tool name] — [что делает, почему нужен]
+   Сигнал из дневника: "[цитата или паттерн из diary]"
 
 2. ...
 
-**MEDIUM — would be convenient:**
+**MEDIUM — было бы удобно:**
 ...
 
-**LOW / idea for later:**
+**LOW / идея на потом:**
 ...
 
-### ✅ What works well (keep as is)
-- [skill/tool] — [why it works]
+### ✅ Что работает хорошо (оставить как есть)
+- [skill/tool] — [почему работает]
 
-### ⚠️ Known limitations (not critical, but keep in mind)
-- [limitation] — [workaround if any]
+### ⚠️ Известные ограничения (не критично, но держать в голове)
+- [limitation] — [workaround если есть]
 ```
 
 ### Step 5 — Write diary entry
@@ -93,6 +93,6 @@ Topic: `qa-tooling`.
 
 - Base every suggestion on a concrete signal from diary — no speculative "it would be nice"
 - One suggestion per pain point — don't bundle unrelated improvements
-- If diary has no clear pain points, say so explicitly ("Diary shows no clear pain points — retro has nothing to fill")
+- If diary has no clear pain points, say so explicitly ("Дневник не показывает явных болей — ретро нечем наполнить")
 - Don't reproduce what tc-gap does (coverage analysis) — that's a separate skill
 - Keep total output under 15 items

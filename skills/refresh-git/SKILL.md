@@ -1,8 +1,8 @@
 ---
 name: refresh-git
 description: >-
-  Pull latest changes from main branch for all configured <product> repos
-  and incrementally update the code-review-graph for each.
+  Pull latest changes from main branch for all 3 <product> repos (backend,
+  frontend, admin) and incrementally update the code-review-graph for each.
   Run at the start of a session before code analysis or QA work.
   Trigger: "/refresh-git", "обнови код", "подтяни изменения", "свежий код".
 version: 0.1.0
@@ -10,19 +10,15 @@ version: 0.1.0
 
 # Refresh — Sync Code & Update Graphs
 
-Pull `main` on all repos and rebuild the knowledge graphs incrementally.
+Pull `main` on all three <product> repos and rebuild the knowledge graphs incrementally.
 
-## Configuration
-
-Set the actual paths to your repos:
+## Repos
 
 | Alias | Path |
 |---|---|
-| backend | `<backend-repo>` |
-| frontend | `<frontend-repo>` |
-| admin | `<admin-repo>` |
-
-Replace `<backend-repo>`, `<frontend-repo>`, `<admin-repo>` with absolute paths to your local repositories (e.g. `~/MyProduct/backend`).
+| backend | `<product-dir>/backend` |
+| frontend | `<product-dir>/frontend` |
+| admin | `<product-dir>/admin` |
 
 ## Workflow
 
@@ -31,9 +27,9 @@ Replace `<backend-repo>`, `<frontend-repo>`, `<admin-repo>` with absolute paths 
 For each repo, run in sequence:
 
 ```bash
-cd <backend-repo> && git checkout main && git pull
-cd <frontend-repo> && git checkout main && git pull
-cd <admin-repo> && git checkout main && git pull
+cd <product-dir>/backend && git checkout main && git pull
+cd <product-dir>/frontend && git checkout main && git pull
+cd <product-dir>/admin && git checkout main && git pull
 ```
 
 Capture output per repo: how many commits pulled (or "Already up to date.").
@@ -43,9 +39,9 @@ Capture output per repo: how many commits pulled (or "Already up to date.").
 For each repo that pulled **new commits** (not "Already up to date"), run:
 
 ```bash
-cd <backend-repo> && code-review-graph update
-cd <frontend-repo> && code-review-graph update
-cd <admin-repo> && code-review-graph update
+cd <product-dir>/backend && code-review-graph update
+cd <product-dir>/frontend && code-review-graph update
+cd <product-dir>/admin && code-review-graph update
 ```
 
 If a repo was already up to date — skip graph update for it (no new files to process).

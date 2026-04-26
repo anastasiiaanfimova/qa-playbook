@@ -11,58 +11,40 @@ version: 0.2.0
 
 # TC Gap — Coverage Gap Analysis
 
-Find what's not covered in `<tms>`. Signal sources differ per project:
+Find what's not covered in <tms>. Signal sources differ per project:
 
 | Project | Primary signal | Additional signal |
 |---|---|---|
-| Web | `<analytics>` named events | `<error-monitoring>` JS errors (frontend crashes, unhandled rejections) |
-| Back | Backend handlers (`<backend-repo>/app/handlers/`) | `<error-monitoring>` Python errors (unhandled exceptions in handlers) |
-| Admin | Admin panel pages and their operations (`<admin-repo>/src`) | — |
+| Web (id=1) | <analytics> named events | <error-monitoring> JS errors (frontend crashes, unhandled rejections) |
+| Back (id=2) | Backend handlers (`/backend/backend/app/handlers/`) | <error-monitoring> Python errors (unhandled exceptions in handlers) |
+| Admin (id=3) | Admin panel pages and their operations (`/admin/src`) | — |
 
-**`<error-monitoring>` MCP:** `mcp__<error-monitoring>__list_issues`, `mcp__<error-monitoring>__list_events`, `mcp__<error-monitoring>__get_resource`
+**<error-monitoring> MCP:** `mcp__sentry__list_issues`, `mcp__sentry__list_events`, `mcp__sentry__get_sentry_resource`
 
 Run automatically when invoked — no clarifying questions.
 
-## Configuration
-
-Replace these placeholders before use:
-
-| Placeholder | What to set |
-|---|---|
-| `<product>` | Your product name |
-| `<tms>` | Your test management system name |
-| `<analytics>` | Your analytics tool |
-| `<error-monitoring>` | Your error monitoring tool |
-| `<wiki>` | Your knowledge base / wiki tool |
-| `<backend-repo>` | Absolute path to your backend repository |
-| `<admin-repo>` | Absolute path to your admin repository |
-| `<YOUR_WIKI_TC_GAP_PAGE_ID>` | Page ID of your TC Gap wiki page |
-| `<YOUR_WIKI_TC_GAP_URL>` | URL of your TC Gap wiki page |
-| `<YOUR_ANALYTICS_PROJECT_ID>` | Your analytics project/app ID |
-| Project IDs (1, 2, 3) | Your TMS project IDs for Web, Back, Admin |
-
 ## Workflow
 
-### Step 0 — Read existing wiki page
+### Step 0 — Read existing <wiki> page
 
 Before doing anything else, fetch the current TC Gap page:
-**Page ID:** `<YOUR_WIKI_TC_GAP_PAGE_ID>`
+**Page ID:** `34b98d8a-3c9b-81e7-8a16-c6d685dd0742`
 
-Use `mcp__<wiki>__<wiki>-fetch` with that ID.
+Use `mcp__notion__notion-fetch` with that ID.
 
 Extract and carry into the analysis:
-1. **Date of last run** — compare with today, understand how stale the data is
-2. **Anomalies / under question** — anything marked ⚠️ in the previous report (e.g. `Payment Successful ≠ Payment Succeeded?`) → add to "re-check" list in current analysis
-3. **"📌 Notes" section** — if present, save verbatim: it is written manually and is **never overwritten** during updates
+1. **Дата последнего запуска** — сравнить с сегодня, понять насколько данные устарели
+2. **Аномалии / под вопросом** — всё что было помечено ⚠️ в предыдущем репорте (например, `Payment Successful ≠ Payment Succeeded?`) → добавить в список "перепроверить" в текущем анализе
+3. **Раздел "📌 Заметки"** — если он есть на странице, сохранить его содержимое дословно: он написан вручную и НЕ перезаписывается при обновлении
 
 ---
 
 ### Step 1 — Fetch all TCs from <tms> (parallel)
 
 ```
-mcp__<tms>__<tms>_list_testcases(project_id=<web-project-id>)   # Web
-mcp__<tms>__<tms>_list_testcases(project_id=<back-project-id>)  # Back
-mcp__<tms>__<tms>_list_testcases(project_id=<admin-project-id>) # Admin
+mcp__<tms>__<tms>_list_testcases(project_id=1)  # Web
+mcp__<tms>__<tms>_list_testcases(project_id=2)  # Back
+mcp__<tms>__<tms>_list_testcases(project_id=3)  # Admin
 ```
 
 Build flat lists per project. Count totals.
@@ -73,13 +55,11 @@ Build flat lists per project. Count totals.
 
 #### Web → <analytics> events
 
-1. `mcp__<analytics>__get_context` → get projectId for Production (`<YOUR_ANALYTICS_PROJECT_ID>`)
-2. `mcp__<analytics>__search` with queries for known event families — configure for your product:
-   ```
-   ["Job", "Payment", "Registration", "User", "Email", "Account", "Sign In"]
-   ```
+1. `mcp__Amplitude__get_context` → get projectId for Production (<YOUR_ANALYTICS_PROJECT_ID>)
+2. `mcp__Amplitude__search` with queries for known event families:
+   `["Task", "Payment", "Registration", "Post", "Logged", "Email", "Person", "Account", "Sign In"]`
    entityTypes: `["EVENT"]`, appIds: `[<YOUR_ANALYTICS_PROJECT_ID>]`
-3. Filter out SDK-internal and experiment prefixes (e.g. `[Guides-Surveys]`, `[Experiment]`).
+3. Filter out `[Guides-Surveys]`, `[<analytics>]`, `[Experiment]` prefixes.
 4. Result: list of named product events.
 
 #### Back → Backend handlers
@@ -87,64 +67,64 @@ Build flat lists per project. Count totals.
 Read handler files to discover what's implemented:
 
 ```bash
-find <backend-repo>/app/handlers -name "*.py" | sort
+find <product-dir>/backend/backend/app/handlers -name "*.py" | sort
 ```
 
 For each handler file, extract: filename + first docstring or comment describing what it handles.
 Group into functional areas: billing, generation, assets, auth, webhooks.
 
-**Optional: enrich with `<error-monitoring>` errors**
+**Optional: enrich with <error-monitoring> errors**
 
-After reading handlers, check `<error-monitoring>` for high-frequency unhandled exceptions that might reveal untested error paths:
+After reading handlers, check <error-monitoring> for high-frequency unhandled exceptions that might reveal untested error paths:
 
 ```
-mcp__<error-monitoring>__list_issues(query="is:unresolved", limit=20)
+mcp__sentry__list_issues(query="is:unresolved", limit=20)
 ```
 
-For each `<error-monitoring>` issue not covered by a Back TC — add to the gap list with priority based on event count (HIGH >1000/day, MEDIUM 100–1000, LOW <100).
+For each <error-monitoring> issue not covered by a Back TC — add to the gap list with priority based on event count (HIGH >1000/day, MEDIUM 100–1000, LOW <100).
 
-If code is unavailable, use a known handler map as fallback. Example structure for a SaaS product with billing and async generation:
+If code is unavailable, use this known handler map as fallback:
 
 | Area | Handlers |
 |---|---|
-| Billing — success | payment provider webhooks (stripe, paypal, etc.) |
+| Billing — success | stripe, mollie, inwizo, tailored_pay, forumpay, paypal webhooks |
 | Billing — failure | payment error, webhook retry, duplicate webhook |
 | Billing — auto-topup | low balance trigger |
-| Generation | job create, job fail/rescue, credits refund |
-| Assets | upload, batch upload, format validation, preview |
-| Auth | OAuth, email registration, session handling |
+| Generation | task create, task fail/rescue, credits refund |
+| Assets | upload, batch upload, HEIC validation, s3 key, preview |
+| Auth | Google OAuth, email registration, long transaction |
 
 #### Admin → Admin panel operations
 
 Read admin source to discover pages:
 
 ```bash
-find <admin-repo>/src -name "*.tsx" -path "*/pages/*" | sort
+find <product-dir>/admin/src -name "*.tsx" -path "*/pages/*" | sort
 ```
 
-If unavailable, use a known operations map as fallback. Example structure:
+If unavailable, use this known operations map as fallback:
 
 | Page | Operations |
 |---|---|
-| Users / UserDetail | search, view profile, promote, grant credits |
-| Jobs / JobDetail | view job, view status, view details |
-| Models / ModelDetail | create model, edit model |
+| Users / UserDetail | search, view profile, promote trusted, grant credits |
+| Tasks / TaskDetail | view task, view status, view details |
+| Personas / PersonaDetail | create persona, edit persona |
 | Templates | create, edit, transfer stage→prod |
-| AIAssets | manage AI model assets |
+| Loras / ServiceLoras | manage LoRA models |
 | Banners | create, edit banners |
 | Promocodes | create promocodes |
-| SubscriptionPlans | manage subscription plans |
-| GenerationServers | monitor servers, manage |
+| CreditPlans | manage credit plans |
+| ComfyServers | monitor servers, manage |
 | ToolRestrictions | set tool restrictions |
-| PaymentRefunds | process refunds |
+| MollieRefunds | process refunds |
 | Transactions | view transaction history |
-| JobStats | analytics (multiple tabs) |
+| TaskStats | analytics (6 tabs) |
 
 ---
 
 ### Step 3 — Cross-reference per project
 
-**Web:** For each `<analytics>` event, check if any Web TC title contains all words from the event name (case-insensitive). Mark ✅ / ❌.
+**Web:** For each <analytics> event, check if any Web TC title contains all words from the event name (case-insensitive). Mark ✅ / ❌.
 
 **Back:** For each handler/area, check if any Back TC title contains keywords from that area. Match rule: at least one keyword from the handler description appears in the TC title.
 
@@ -191,39 +171,39 @@ Date: YYYY-MM-DD
 ```
 
 **Priority for gaps:**
-- HIGH: payment/auth/generation critical path, or high analytics volume (>50K)
+- HIGH: payment/auth/generation critical path, or high <analytics> volume (>50K)
 - MEDIUM: important feature with no coverage, medium volume (5K–50K)
 - LOW: edge case, low volume (<5K), view-only events
 
 ---
 
-### Step 5 — Update wiki page
+### Step 5 — Update <wiki> page
 
-After producing the report, update the TC Gap page in `<wiki>`:
-**Page ID:** `<YOUR_WIKI_TC_GAP_PAGE_ID>`
-**URL:** `<YOUR_WIKI_TC_GAP_URL>`
+After producing the report, update the TC Gap page in <wiki>:
+**Page ID:** `34b98d8a-3c9b-81e7-8a16-c6d685dd0742`
+**URL:** https://www.<wiki>.so/TC-Gap-34b98d8a3c9b81e78a16c6d685dd0742
 
-Use `mcp__<wiki>__<wiki>-update-page` with `command: replace_content`.
+Use `mcp__notion__notion-update-page` with `command: replace_content`.
 
-**Page structure — in this order:**
+**Структура страницы — строго в таком порядке:**
 
 ```
-[Callout: run date + coverage by project]
+[Callout: дата запуска + coverage по проектам]
 
-[Auto-report: three sections Web / Back / Admin]
+[Авто-репорт: три секции Web / Back / Admin]
 
 ---
 
-## 📌 Notes
-[Content from Step 0 — copy verbatim if it existed.
-If section didn't exist — create it empty. User adds to this manually.]
+## 📌 Заметки
+[Содержимое из Step 0 — скопировать дословно если было.
+Если раздела не было — создать пустым. Пользователь добавляет сюда вручную.]
 ```
 
-**Update rules:**
-- Callout and three report sections — always overwritten with fresh data
-- `## 📌 Notes` section — **always preserved**: take content from Step 0 and insert unchanged
-- If Step 0 had no Notes section — create `## 📌 Notes` heading with empty body
-- Never delete anything from Notes, even if it looks stale — it's manual content
+**Правила обновления:**
+- Callout и три секции репорта — всегда перезаписываются свежими данными
+- Раздел `## 📌 Заметки` — **всегда сохраняется**: взять содержимое из Step 0 и вставить без изменений
+- Если в Step 0 раздела не было — создать заголовок `## 📌 Заметки` с пустым телом
+- Ничего не удалять из раздела заметок, даже если кажется устаревшим — это ручной контент
 
 ### Step 6 (optional) — Create TCs for top gaps
 
@@ -234,8 +214,8 @@ If user says "create them" / "добавь кейсы":
 
 ## Fallback: if <analytics> is unavailable
 
-Skip Web analytics signals. Run Back and Admin analysis only.
-For Web, fall back to critical path check (payment, auth, generation, content moderation).
+Skip Web <analytics> signals. Run Back and Admin analysis only.
+For Web, fall back to critical path check (payment, auth, generation, nsfw).
 
 ## Notes
 
