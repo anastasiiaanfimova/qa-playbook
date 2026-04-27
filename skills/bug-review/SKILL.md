@@ -1,12 +1,12 @@
 ---
-name: bug-candidates
+name: bug-review
 description: >-
   Weekly refresh of <product> QA data sources + rebuild of Bug Candidates list.
   Two-layer flow: refresh individual source pages in <wiki> (<vcs>, <error-monitoring>,
   <metrics>, <analytics>, <data-warehouse>, <task-tracker>, <wiki> docs), then rebuild the "Bug
   Candidates" <wiki> DB with smart dedup against prior week. Main output is
   Bug Candidates — the input for bug-dig triage. Never auto-creates <task-tracker>
-  tasks. Trigger: "bug-candidates", "weekly-review", "обнови ревью", "собери кандидатов", "свежий bug list".
+  tasks. Trigger: "bug-review", "weekly-review", "обнови ревью", "собери кандидатов", "свежий bug list".
 version: 0.2.0
 ---
 
@@ -20,10 +20,10 @@ Purpose: keep the QA Review knowledge base fresh without spamming <wiki> with ap
 
 | Command | What it does |
 |---|---|
-| `/bug-candidates refresh [source?]` | Layer 1. Update source pages in <wiki>. Without arg — all auto sources. With arg (`<vcs>`, `<error-monitoring>`, `<task-tracker>`, `<metrics>`, `<analytics>`, `<data-warehouse>`, `<wiki>-docs`) — one. |
-| `/bug-candidates bugs` | Layer 2. Rebuild Bug Candidates DB — smart merge against existing rows. |
-| `/bug-candidates qa` | Regenerate QA Review synthesis on top of fresh sources + candidates. |
-| `/bug-candidates all` | Everything in order: refresh → bugs → qa. |
+| `/bug-review refresh [source?]` | Layer 1. Update source pages in <wiki>. Without arg — all auto sources. With arg (`<vcs>`, `<error-monitoring>`, `<task-tracker>`, `<metrics>`, `<analytics>`, `<data-warehouse>`, `<wiki>-docs`) — one. |
+| `/bug-review bugs` | Layer 2. Rebuild Bug Candidates DB — smart merge against existing rows. |
+| `/bug-review qa` | Regenerate QA Review synthesis on top of fresh sources + candidates. |
+| `/bug-review all` | Everything in order: refresh → bugs → qa. |
 
 **Default cadence: weekly.** Don't run more than once a week without explicit reason — noise in Last seen / Weeks seen columns.
 

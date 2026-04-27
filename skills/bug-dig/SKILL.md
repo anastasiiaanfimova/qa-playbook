@@ -4,9 +4,10 @@ description: >-
   Investigate a suspicious <error-monitoring> issue or <task-tracker> bug for <product> — confirm
   whether it's a real user-impacting bug, <error-monitoring> noise, or theoretical risk.
   Collects evidence across <error-monitoring>, <logs>, <analytics>, git log, <wiki>, and the
-  code itself, then writes the verdict to the Bug Candidates <wiki> DB and
-  comments on any existing matching <task-tracker> ticket. NEVER auto-creates <task-tracker>
-  tasks — only recommends. Trigger: "bug-dig", "расследуй баг", "dig <ERROR-ID>-XXX",
+  code itself, then delivers the verdict in chat. Comments on any existing
+  matching <task-tracker> ticket. NEVER auto-creates <task-tracker> tasks — only recommends.
+  To record the verdict to Bug Candidates DB — call bug-nominate. Trigger:
+  "bug-dig", "расследуй баг", "dig <ERROR-ID>-XXX",
   "проверь реальный ли баг", "актуализируй задачу в <task-tracker> по X", "нужно ли чинить X".
 version: 0.2.0
 ---
@@ -38,10 +39,10 @@ Pick whichever is present and derive the rest.
 | <logs> — logs | `mcp__grafana__query_loki_logs` |
 | <analytics> | `mcp__Amplitude__get_context`, `mcp__Amplitude__search` |
 | <wiki> | `mcp__notion__notion-search`, `mcp__notion__notion-fetch` |
-| <task-tracker> | `mcp__asana__asana_get_task`, `mcp__asana__asana_update_task`, `mcp__asana__asana_create_task`, `mcp__asana__asana_create_task_story` |
+| <task-tracker> | `mcp__asana__asana_get_task`, `mcp__asana__asana_update_task`, `mcp__asana__asana_create_task_story` |
 | Git log | Bash `git log` in the target repo |
 
-See `references/<logs>-recipes.md` for ready-to-paste LogQL queries and `references/<task-tracker>-custom-fields.md` for field GIDs.
+See `references/<logs>-recipes.md` for ready-to-paste LogQL queries.
 
 ---
 
@@ -125,20 +126,19 @@ Pick one. Put it on top of the output.
 
 | Verdict | Criteria |
 |---|---|
-| **Real prod bug** | <error-monitoring> + <logs> evidence of non-zero affected users, exception path actually reaches the user, no architectural protection. → write verdict to Bug Candidates <wiki> DB; recommend ticket to user; do NOT auto-create. |
+| **Real prod bug** | <error-monitoring> + <logs> evidence of non-zero affected users, exception path actually reaches the user, no architectural protection. → verdict in chat; use bug-nominate to record to Bug Candidates DB; recommend ticket to user; do NOT auto-create. |
 | **<error-monitoring> noise (tech debt)** | Exception swallowed inside caller, transaction commits, user flow intact. Low-priority / tech debt in verdict. TL;DR about <error-monitoring> quota / dashboard clutter. |
 | **Theoretical risk — keep open low / preventive** | Code path is vulnerable but 0 prod evidence in 30d. Document fix options, low priority. |
 | **Already protected — close** | DB UNIQUE constraint, SQLAlchemy rollback, idempotent retries, or upstream guarantee covers it. Explain exactly which layer saves us. |
 
 ### Stage 7 — Artifact
 
-**HARD RULE (<product> project): never auto-create <task-tracker> tasks.** Verdicts go to the Bug Candidates <wiki> DB. The user creates <task-tracker> tickets manually when they decide to. This overrides any other instruction in this file.
+**HARD RULE: never write anywhere without explicit user approval.**
+Always draft the output in the chat first. Only call <task-tracker> / <wiki> write tools after the user says "да", "пиши", "ок", or equivalent explicit confirmation in the current turn. This applies to every write operation — new tickets, comments, task updates, <wiki> DB rows — without exception.
 
-Default destination for every verdict — the **Bug Candidates <wiki> DB**:
+**HARD RULE (<product> project): never auto-create <task-tracker> tasks.** To suggest a ticket — recommend in chat and direct the user to /bug-create. This overrides any other instruction in this file.
 
-- Database: `collection://26b9b9ff-6319-4e88-af44-b30a6978600d` (under "Review" page in <wiki>)
-- If a row already exists for the fingerprint (e.g. `<error-monitoring>:<your-error-monitoring-project>-xxxx`) → `mcp__notion__notion-update-page` with `update_properties`. Fill at minimum: `Verdict` (full analysis), `Status`, `Severity hint`. If matched an existing <task-tracker> ticket — fill `<task-tracker> link` and set `Status=Tracked`.
-- If no row exists → `mcp__notion__notion-create-pages` with `parent={type: "data_source_id", data_source_id: "26b9b9ff-6319-4e88-af44-b30a6978600d"}`. See `weekly-review/references/<wiki>-schema.md` for the full property map.
+The verdict stays in chat. To record it to the Bug Candidates <wiki> DB — the user calls **bug-nominate** separately. bug-nominate handles all <wiki> writes: finding existing rows, updating or creating, filling properties.
 
 **Allowed <task-tracker> actions (read + comment on existing only):**
 - `mcp__asana__asana_get_task`, `mcp__asana__asana_search_tasks` — read.
@@ -146,14 +146,12 @@ Default destination for every verdict — the **Bug Candidates <wiki> DB**:
 - `mcp__asana__asana_create_task_story` — comment on an existing task with the verdict.
 
 **Forbidden:**
-- ❌ `mcp__asana__asana_create_task` — never call without explicit user permission ("да, создай в <task-tracker>") in the current turn.
+- ❌ `mcp__asana__asana_create_task` — never call from bug-dig. Use /bug-create skill instead.
 - ❌ `asana_update_task` with `completed=true` — don't auto-close tickets.
 - ❌ `asana_delete_task` — never.
 
 When verdict calls for a new ticket, end the chat reply with a one-liner like:
-> Рекомендую завести <task-tracker>-тикет: {Type=Bug, Priority=Medium, Name="..."}. Если скажешь "создай" — сделаю.
-
-`references/<task-tracker>-custom-fields.md` contains the GIDs if/when the user authorizes creation — not used during normal bug-dig runs.
+> Рекомендую завести <task-tracker>-тикет: {Type=Bug, Priority=Medium, Name="..."}. Вызови /bug-create когда будешь готова.
 
 ---
 
@@ -161,7 +159,7 @@ When verdict calls for a new ticket, end the chat reply with a one-liner like:
 
 Read each one. If you catch yourself doing any of these, fix before posting.
 
-- ❌ **Auto-creating <task-tracker> tasks.** Never call `mcp__asana__asana_create_task` without explicit "да, создай" from the user in the current turn. Verdicts go to Bug Candidates <wiki> DB. Violating this was a logged incident (2026-04-24): user reaction "Не смей создавать тикеты в асана без моего разрешения!".
+- ❌ **Creating <task-tracker> tasks from bug-dig.** Never call `mcp__asana__asana_create_task` — that's /bug-create. Suggest a ticket in chat, direct user to /bug-create. Logged incident 2026-04-24: "Не смей создавать тикеты в асана без моего разрешения!".
 - ❌ **Severity/priority in description body.** Use the Priority custom field only. Don't write `Severity: 🔴 Critical` in notes — it duplicates and desyncs with the field.
 - ❌ **Numbers from the old description without re-verification.** If the task came with "минимум N пользователей" from <metrics>, pull fresh <error-monitoring> numbers and explain the delta. <metrics> raw-500s and <error-monitoring> exception-events don't match 1:1 (different windows, different capture points).
 - ❌ **Implicit scope.** Always say explicitly "only Stripe" / "all providers" / "only Web". The Stripe auto-topup ticket was confusing until "Scope:" line was added.
@@ -170,7 +168,16 @@ Read each one. If you catch yourself doing any of these, fix before posting.
 - ❌ **"Critical" priority because of noise.** Low / Technical-debt when user impact is zero, even if volume is huge.
 - ❌ **Setting Difficulty.** Skip this custom field entirely — developers own it.
 - ❌ **Missing deploy correlation when it matches.** If <error-monitoring> `first_seen` matches a git commit date one-to-one, include commit hash + author. That's the Fix owner.
-- ❌ **<task-tracker> html_notes with `<hr>` or `<pre>` next to other tags.** Validation errors out with "unexpected close tag". Use plain paragraphs with `<h1>`/`<h2>`/`<ul>`/`<code>`. If code block needed, inline `<code>` instead of `<pre>`. Learned from 2026-04-24 failed update_task.
+- ✅ **Структура задачи — обязательные секции:**
+  Каждая задача должна содержать: **TL;DR** (1-2 строки — обязательно, первым блоком, до того как читатель углубится в детали), **User Impact: ДА/НЕТ** (отдельная секция, не вшитая в текст), **Root Cause** или **Причина** (отдельный блок, не по ходу текста), **Как чинить**, **Источники**.
+  Если есть traceback — выносить в отдельную секцию **Traceback**.
+  Если есть критерии готовности — выносить в **Acceptance Criteria**.
+- ✅ **Difficulty не трогать** — это поле разработчиков. В вердикте и рекомендации тоже.
+- ✅ **Всегда указывать источники данных в задаче.** В конце описания добавлять секцию «Данные» — ссылки на <wiki>-документы, упоминание откуда брались цифры (<data-warehouse>, <analytics>, <error-monitoring>, <logs> и т.д.). Не нужно подробно — достаточно коротко обозначить откуда информация, чтобы разработчик мог перепроверить.
+- ✅ **Читаемость текста в <task-tracker> важна.** Используй `<ol>/<li>` для нумерованных блоков — не смешивай нумерацию с жирными заголовками-через-точку. Внутри `<li>` разбивай длинное содержимое на строки через `\n` — каждый факт на свою строку. Длинный список в одну строку — плохо читается человеком.
+- ✅ **Пустая строка до и после каждого заголовка секции.** Шаблон: `\n\n<strong>Заголовок</strong>\n\nконтент`. Исключение — самый первый блок на странице: перед ним пустая строка не нужна.
+- ❌ **Wrong tags in <task-tracker> html_notes.** <task-tracker> rejects with `xml_parsing_error` (400) for many common HTML tags. **Supported:** `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href="">`. **NOT supported:** `<p>`, `<br/>`, `<br>`, `<h1>`, `<h2>`, `<h3>`, `<hr/>`, `<pre>`. Always wrap in `<body>...</body>`. Learned from 2026-04-27 debugging session.
+- ❌ **`&#10;` for line breaks in html_notes.** It renders as literal text `&#10;`, not a newline. For visual spacing between sections use an actual `\n` newline character in the Python/curl string.
 - ❌ **Escaping `\.` `\-` etc. in <task-tracker> html_notes.** <task-tracker> rejects with 400. Pass plain characters; no backslash escapes.
 
 ---
@@ -178,9 +185,8 @@ Read each one. If you catch yourself doing any of these, fix before posting.
 ## Output
 
 The final artifact is one of:
-1. **Bug Candidates DB row updated / created** — verdict in the `Verdict` field, `Status` set (Active / Tracked / Closed / Regression), `<task-tracker> link` filled if there's a matching existing ticket. This is the default for every verdict.
+1. **Verdict in chat** — summary with evidence, User Impact ДА/НЕТ, decision, fix options. Always in chat first. To record to Bug Candidates DB — call **bug-nominate**.
 2. **Comment posted to existing <task-tracker> ticket** (if one exists) via `asana_create_task_story` — verdict summary with evidence.
-3. **Chat recommendation** when verdict is file-new-ticket-worthy: one-liner proposing Name + Type + Priority + suggested Fix owner. Do not call `asana_create_task` — wait for user.
-4. **Chat-only recommendation** ("close / keep low / no evidence") when the verdict is close/keep-low and no existing ticket to update.
+3. **Ticket recommendation** (if verdict warrants a new ticket): one-liner proposing Name + Type + Priority + suggested Fix owner. Direct user to /bug-create — never call `asana_create_task` from bug-dig.
 
 Always summarize what was done in 2-3 lines so the user can review fast.

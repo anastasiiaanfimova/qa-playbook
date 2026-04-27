@@ -1,10 +1,10 @@
 ---
-name: refresh-git
+name: git-refresh
 description: >-
   Pull latest changes from main branch for all 3 <product> repos (backend,
   frontend, admin) and incrementally update the code-review-graph for each.
   Run at the start of a session before code analysis or QA work.
-  Trigger: "/refresh-git", "обнови код", "подтяни изменения", "свежий код".
+  Trigger: "/git-refresh", "обнови код", "подтяни изменения", "свежий код".
 version: 0.1.0
 ---
 

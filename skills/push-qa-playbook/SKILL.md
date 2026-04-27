@@ -32,9 +32,10 @@ PUBLIC_QA_SKILLS = [
   tc-update
   tc-gap
   bug-dig
-  bug-candidates
+  bug-nominate
+  bug-review
   qa-tooling
-  refresh-git
+  git-refresh
   daily
   push-qa-playbook
 ]
