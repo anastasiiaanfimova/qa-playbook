@@ -1,10 +1,10 @@
 ---
-name: push-qa-playbook
+name: qa-playbook-push
 description: >-
   Sync local QA skills and agents to github.com/anastasiiaanfimova/qa-playbook,
   anonymizing private tool names and paths before push. Compares local vs repo,
   shows diffs, commits only changed files. Fully automatic.
-  Trigger: "push-qa-playbook", "запуши qa playbook", "обнови qa-playbook", "sync qa playbook".
+  Trigger: "qa-playbook-push", "запуши qa playbook", "обнови qa-playbook", "sync qa playbook".
 ---
 
 # Sync QA Playbook
@@ -24,39 +24,12 @@ Local:  /tmp/qa-playbook
 
 ### Files to sync
 
-**Skills** — only those in PUBLIC_QA_SKILLS:
-```
-PUBLIC_QA_SKILLS = [
-  tc-create
-  tc-update
-  tc-gap
-  bug-dig
-  bug-nominate
-  bug-review
-  bug-create
-  bug-comment
-  qa-tooling
-  git-refresh
-  git-diff
-  daily
-  push-qa-playbook
-]
-```
+**Skills** — only those listed under `qa-playbook:` in `~/.claude/skills/REGISTRY.yml` are synced. `REGISTRY.yml` is the single source of truth — do not maintain a list here.
+
 Each skill is synced as `skills/<name>/SKILL.md`.
 
-**Agents** — only those in PUBLIC_QA_AGENTS (no anonymization needed — they're generic):
-```
-PUBLIC_QA_AGENTS = [
-  test-case-writer
-  test-architect
-  coverage-analyst
-  e2e-tester
-  api-tester
-  perf-tester
-  qa-researcher
-  bug-reporter
-]
-```
+**Agents** — only those listed under `qa-playbook-agents:` in `~/.claude/skills/REGISTRY.yml` are synced (no anonymization needed — they're generic).
+
 Each agent is synced as `agents/<name>.md`.
 
 ### Anonymization
@@ -64,7 +37,7 @@ Each agent is synced as `agents/<name>.md`.
 Replacement rules and the privacy-scan pattern live in a **local-only** file (never synced):
 
 ```
-~/.claude/skills/push-qa-playbook/replacements.md
+~/.claude/skills/qa-playbook-push/replacements.md
 ```
 
 To add a new private name, append a line:
@@ -91,13 +64,14 @@ fi
 
 ### Step 1 — Build anonymization function
 
-Save to `/tmp/qa-anon.py` once at the start of the skill run (use a different path from push-claude-config to avoid conflicts):
+Save to `/tmp/qa-anon.py` once at the start of the skill run (use a different path from claude-config-push to avoid conflicts):
 
 ```python
 # qa-anon.py — reads patterns from replacements.md, applies to stdin
 import sys, re, os
 
-repl_file = os.path.expanduser('~/.claude/skills/push-qa-playbook/replacements.md')
+skill_dir = os.path.expanduser('~/.claude/skills/qa-playbook-push')
+repl_file = os.path.join(skill_dir, 'replacements.md')
 replacements = []
 with open(repl_file) as f:
     for line in f:
@@ -116,11 +90,19 @@ print(text, end='')
 
 ### Step 2 — Diff and copy skills
 
-Read PUBLIC_QA_SKILLS and PUBLIC_QA_AGENTS from Config above and build arrays using this template (substitute names from Config, space-separated). Define both here — reuse in Steps 2b and 2c:
+Read `~/.claude/skills/REGISTRY.yml` to get PUBLIC_QA_SKILLS, and PUBLIC_QA_AGENTS from Config above. Build both arrays here — reuse in Steps 2b and 2c:
 
 ```bash
-PUBLIC_QA_SKILLS=(<names from Config>)
-PUBLIC_QA_AGENTS=(<names from Config>)
+PUBLIC_QA_SKILLS=($(python3 -c "
+import yaml, sys
+with open(sys.argv[1]) as f: reg = yaml.safe_load(f)
+print(' '.join(reg.get('qa-playbook', [])))
+" ~/.claude/skills/REGISTRY.yml))
+PUBLIC_QA_AGENTS=($(python3 -c "
+import yaml, sys
+with open(sys.argv[1]) as f: reg = yaml.safe_load(f)
+print(' '.join(reg.get('qa-playbook-agents', [])))
+" ~/.claude/skills/REGISTRY.yml))
 ```
 
 Iterate over skills:
@@ -193,7 +175,8 @@ done
 Before staging anything, scan all repo files for private names that should have been anonymized:
 
 ```bash
-REPL_FILE="$HOME/.claude/skills/push-qa-playbook/replacements.md"
+SKILL_DIR="$HOME/.claude/skills/qa-playbook-push"
+REPL_FILE="$SKILL_DIR/replacements.md"
 SCAN_PATTERN=$(grep "^SCAN:" "$REPL_FILE" | sed 's/^SCAN: *//')
 
 LEAKS=$(grep -rn "$SCAN_PATTERN" /tmp/qa-playbook/ \
@@ -279,8 +262,8 @@ git -C /tmp/qa-playbook log --oneline -1
 
 - **Always anonymize skills before diffing** — run through qa-anon.py even if the file looks clean.
 - **Agents are NOT anonymized** — they're generic and have no private tool references.
-- Uses `/tmp/qa-anon.py` (not `/tmp/anon.py`) to avoid conflicts with push-claude-config runs.
+- Uses `/tmp/qa-anon.py` (not `/tmp/anon.py`) to avoid conflicts with claude-config-push runs.
 - `replacements.md` is **local-only** — it's never synced to qa-playbook.
-- To add a skill: update **PUBLIC_QA_SKILLS** in Config above — that's the only place to edit. Step 2 reads the list from there at runtime.
-- To add an agent: update **PUBLIC_QA_AGENTS** in Config above — same rule.
+- To add a skill: add it to the `qa-playbook:` section in `~/.claude/skills/REGISTRY.yml` — that's the only place to edit. Step 2 reads the list from there at runtime.
+- To add an agent: add it to the `qa-playbook-agents:` section in `~/.claude/skills/REGISTRY.yml` — same rule.
 - Before adding an agent to PUBLIC_QA_AGENTS: verify it has no private references first (grep for product names).

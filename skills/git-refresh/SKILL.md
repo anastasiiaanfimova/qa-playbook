@@ -7,7 +7,7 @@ description: >-
   Trigger: "/git-refresh", "обнови код", "подтяни изменения", "свежий код".
 ---
 
-# Refresh — Sync Code & Update Graphs
+# git-refresh — Sync Code & Update Graphs
 
 Pull `main` on all three <product> repos and rebuild the knowledge graphs incrementally.
 

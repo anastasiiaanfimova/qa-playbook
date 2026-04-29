@@ -42,7 +42,7 @@ Extract recurring signals from the filtered entries:
 ### Step 2 — Inventory existing skills
 
 ```bash
-ls /Users/<user>/.claude/skills/
+ls "$HOME/.claude/skills/"
 ```
 
 For each skill, note: what it does and any known limitations seen in diary.

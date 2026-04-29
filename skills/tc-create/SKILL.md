@@ -25,7 +25,6 @@ Supports two modes:
 | List folders | `mcp__<tms>__<tms>_list_folders` |
 | Create folder | `mcp__<tms>__<tms>_create_folder` |
 | Create TC | `mcp__<tms>__<tms>_create_testcase` |
-| Add TC to folder | `mcp__<tms>__<tms>_add_to_folder` |
 | Update TC | `mcp__<tms>__<tms>_update_testcase` (auto-fetches etag) |
 | Get TC details | `mcp__<tms>__<tms>_get_testcase` |
 
