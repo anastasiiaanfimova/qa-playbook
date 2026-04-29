@@ -33,8 +33,11 @@ PUBLIC_QA_SKILLS = [
   bug-dig
   bug-nominate
   bug-review
+  bug-create
+  bug-comment
   qa-tooling
   git-refresh
+  git-diff
   daily
   push-qa-playbook
 ]
