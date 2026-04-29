@@ -6,7 +6,6 @@ description: >-
   or creates. Does not investigate — that's bug-dig. Does not create <task-tracker> tasks —
   that's bug-create. Trigger: "bug-nominate", "запиши в кандидаты",
   "добавь в candidates", "зафиксируй вердикт", "номинируй баг".
-version: 0.1.0
 ---
 
 # Bug Nominate — record verdict to Bug Candidates DB

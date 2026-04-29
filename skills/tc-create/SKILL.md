@@ -1,12 +1,11 @@
 ---
 name: tc-create
 description: >-
-  This skill should be used when the user asks to "create a test case",
-  "write a TC", "add a test case", "добавь кейс", "создай тест-кейс",
-  "напиши кейс" for <product> in <tms>. Handles naming conventions,
-  priority assignment, step format, and <tms> MCP creation.
-  Also supports bulk mode: creating multiple TCs at once with duplicate checking.
-version: 0.3.0
+  Create test cases for <product> in <tms>. Handles naming conventions,
+  priority assignment, step format, and <tms> MCP creation. Supports bulk
+  mode: creating multiple TCs at once with duplicate checking.
+  Trigger: "create a test case", "write a TC", "add a test case",
+  "добавь кейс", "создай тест-кейс", "напиши кейс".
 ---
 
 # TC Create — <product> <tms>

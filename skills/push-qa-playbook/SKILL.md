@@ -5,7 +5,6 @@ description: >-
   anonymizing private tool names and paths before push. Compares local vs repo,
   shows diffs, commits only changed files. Fully automatic.
   Trigger: "push-qa-playbook", "запуши qa playbook", "обнови qa-playbook", "sync qa playbook".
-version: 0.1.0
 ---
 
 # Sync QA Playbook

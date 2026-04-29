@@ -6,7 +6,6 @@ description: >-
   or workflow improvements. NOT a session summary — focused on "what should we
   build next to work more comfortably?"
   Trigger: "qa-tooling", "что улучшить в тулинге", "нужны новые скилы", "подведи итоги по тулингу".
-version: 0.1.0
 ---
 
 # QA Tooling — Tooling Audit
@@ -30,6 +29,8 @@ Filter entries: keep only those with `date` within the last **14 days** from tod
 Note the actual date range covered (earliest → latest entry date) and include it in the report header — so the user always knows what time period is being analysed.
 
 If fewer than 3 entries remain after filtering → say so explicitly and suggest the user runs the skill again after more sessions have accumulated.
+
+If a diary entry is too compressed to extract a clear signal → supplement with `mcp__episodic-memory__search` using the entry date + key term (e.g. `"2026-04-24 schemathesis"`). Episodic has the full conversation text for that session.
 
 Extract recurring signals from the filtered entries:
 - What required manual steps that felt repetitive?

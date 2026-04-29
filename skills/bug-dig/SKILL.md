@@ -1,15 +1,12 @@
 ---
 name: bug-dig
 description: >-
-  Investigate a suspicious <error-monitoring> issue or <task-tracker> bug for <product> — confirm
-  whether it's a real user-impacting bug, <error-monitoring> noise, or theoretical risk.
-  Collects evidence across <error-monitoring>, <logs>, <analytics>, git log, <wiki>, and the
-  code itself, then delivers the verdict in chat. Comments on any existing
-  matching <task-tracker> ticket. NEVER auto-creates <task-tracker> tasks — only recommends.
-  To record the verdict to Bug Candidates DB — call bug-nominate. Trigger:
-  "bug-dig", "расследуй баг", "dig <ERROR-ID>-XXX",
-  "проверь реальный ли баг", "актуализируй задачу в <task-tracker> по X", "нужно ли чинить X".
-version: 0.2.0
+  Investigate a suspicious <error-monitoring>/<task-tracker> bug for <product>: real user-impacting,
+  noise, or theoretical risk? Collects evidence across <error-monitoring>/<logs>/<analytics>/git/
+  <wiki>/code, delivers verdict in chat, comments on matching <task-tracker> ticket. Never
+  auto-creates <task-tracker> tasks — to record verdict call bug-nominate. Trigger: "bug-dig",
+  "расследуй баг", "dig <ERROR-ID>-XXX", "проверь реальный ли баг",
+  "актуализируй задачу в <task-tracker> по X".
 ---
 
 # Bug Dig — <product> bug investigation flow

@@ -6,7 +6,6 @@ description: >-
   edits, and renames. Handles etag flow automatically. ACTIVE TCs require
   explicit confirmation before any change.
   Trigger: "обнови кейс", "переименуй TC", "перемести в папку", "поменяй тип", "tc-update".
-version: 0.1.0
 ---
 
 # TC Update — <product> <tms>

@@ -7,7 +7,6 @@ description: >-
   Candidates" <wiki> DB with smart dedup against prior week. Main output is
   Bug Candidates — the input for bug-dig triage. Never auto-creates <task-tracker>
   tasks. Trigger: "bug-review", "weekly-review", "обнови ревью", "собери кандидатов", "свежий bug list".
-version: 0.2.0
 ---
 
 # Bug Candidates — <product> QA refresh flow
@@ -55,21 +54,21 @@ See `references/sources/*.md` for per-source collectors (queries, severity mappi
 
 For each source in scope (or the one requested):
 
-1. **Find `last_run`.** Read the source's <wiki> page — look for `<!-- last_run: YYYY-MM-DD -->` HTML comment in the first block. If missing, use 7 days ago.
+1. **Find `last_run`.** Read the source's <wiki> page. Search the full text for the substring `last_run:` — it will appear as `last_run: YYYY-MM-DD` in a code block or paragraph. Do NOT rely on HTML-comment syntax (`<!-- ... -->`): <wiki> may escape angle brackets when fetching. If not found, use 7 days ago.
 2. **Collect delta** using the recipe in `references/sources/<source>.md`. Limit window: `[last_run, today]`.
-3. **Update the source page** — prepend a new section `## Updates YYYY-MM-DD` with the delta, bump the `last_run` marker. Never rewrite older sections.
+3. **Update the source page** — prepend a new section `## Updates YYYY-MM-DD` with the delta, bump the `last_run` marker. Write the marker as a plain code block: `` `last_run: YYYY-MM-DD` ``. Never rewrite older sections.
 4. **Emit signals** (in-memory) — a list of `{fingerprint, title, source, severity_hint, signal_refs}` entries that Layer 2 will consume.
 
 Source pages to update:
 - <vcs> → `https://www.<wiki>.so/34898d8a3c9b8170a985e4b16841e510`
-- <error-monitoring> → NEW — create under Review as "<error-monitoring>" if missing
+- <error-monitoring> → create under Review parent (`34998d8a-3c9b-806d-a443-da66e4a7542c`) as "<error-monitoring>" if page not found
 - <task-tracker> → `https://www.<wiki>.so/34898d8a3c9b81d0a060e2aa8665e537`
 - <metrics> → `https://www.<wiki>.so/34898d8a3c9b81c0adeffc4de6a2f0ec`
 - <data-warehouse> → `https://www.<wiki>.so/34898d8a3c9b818c9e54f814d43bc10f`
 - <analytics> → `https://www.<wiki>.so/34b98d8a3c9b813da281dbd908b6195b`
 - <wiki> docs → `https://www.<wiki>.so/34898d8a3c9b81b097efcd6b96bb1d4a`
 
-**First-run caveat.** If this is the first `/bug-candidates` run, source pages don't have `last_run` markers yet. Use 7 days back and add the marker. <error-monitoring> page may not exist — create it under Review as a sibling of <vcs>.
+**First-run caveat.** If this is the first `/bug-review` run, source pages don't have `last_run` markers yet. Use 7 days back and add the marker. <error-monitoring> page may not exist — create it under Review as a sibling of <vcs>.
 
 ### Layer 2: Bugs (`bugs`)
 
@@ -97,6 +96,8 @@ Regenerate the QA Review page (`https://www.<wiki>.so/34898d8a3c9b81ffb128c375ef
 - Bug Candidates (top Active rows by score)
 - Source-page `## Updates` sections from the last run
 - High-level deltas: "N new bugs this week", "M regressions", "K tracked → closed"
+
+**If the page returns `deleted=true`:** recreate it first under the Review parent (`34998d8a-3c9b-806d-a443-da66e4a7542c`) with title "QA Review", then write content. Update the URL in this file after recreation.
 
 Rewrite the page content. Keep structure stable so week-over-week diff is legible in <wiki> history.
 

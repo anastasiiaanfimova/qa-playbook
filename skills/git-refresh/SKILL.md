@@ -5,7 +5,6 @@ description: >-
   frontend, admin) and incrementally update the code-review-graph for each.
   Run at the start of a session before code analysis or QA work.
   Trigger: "/git-refresh", "обнови код", "подтяни изменения", "свежий код".
-version: 0.1.0
 ---
 
 # Refresh — Sync Code & Update Graphs
