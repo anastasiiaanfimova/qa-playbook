@@ -1,11 +1,11 @@
 ---
-name: qa-tooling
+name: qa-audit
 description: >-
   Tooling audit for <product> QA. Looks at recent work via diary, identifies
   pain points and manual steps, and suggests new skills, agents, automations,
   or workflow improvements. NOT a session summary — focused on "what should we
   build next to work more comfortably?"
-  Trigger: "qa-tooling", "что улучшить в тулинге", "нужны новые скилы", "подведи итоги по тулингу".
+  Trigger: "qa-audit", "что улучшить в тулинге", "нужны новые скилы", "подведи итоги по тулингу".
 ---
 
 # QA Tooling — Tooling Audit
@@ -16,7 +16,7 @@ Output: prioritized suggestions for new skills, agent improvements, MCP tools, a
 
 ## Trigger phrases
 
-- `/qa-tooling`
+- `/qa-audit`
 - "что улучшить в тулинге", "нужны новые скилы", "подведи итоги по тулингу"
 
 ## Workflow
@@ -88,7 +88,7 @@ For each pain point from Step 1, map to a concrete suggestion:
 ### Step 5 — Write diary entry
 
 `mcp__mempalace__mempalace_diary_write` with compact AAAK summary.
-Topic: `qa-tooling`.
+Topic: `qa-audit`.
 
 ## Rules
 

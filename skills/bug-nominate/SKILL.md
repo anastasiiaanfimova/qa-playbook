@@ -1,91 +1,219 @@
 ---
 name: bug-nominate
 description: >-
-  Record a bug-dig verdict to the Bug Candidates <wiki> DB. Accepts the verdict
-  from the current chat, checks for an existing row by fingerprint, then updates
-  or creates. Does not investigate — that's bug-dig. Does not create <task-tracker> tasks —
-  that's bug-create. Trigger: "bug-nominate", "запиши в кандидаты",
-  "добавь в candidates", "зафиксируй вердикт", "номинируй баг".
+  Single owner of writes to the Bug Candidates <wiki> DB. Two modes: interactive
+  (draft+confirm in chat — default, used by bug-dig) and silent (write directly,
+  used by bug-review batch). Auto-detects create vs update by fingerprint. Does
+  not investigate — that's bug-dig. Does not create <task-tracker> tasks — that's task-create.
+  Trigger: "bug-nominate", "запиши в кандидаты", "добавь в candidates",
+  "зафиксируй вердикт", "номинируй баг". Also called automatically by bug-dig
+  (interactive) and bug-review (silent).
 ---
 
-# Bug Nominate — record verdict to Bug Candidates DB
+# bug-nominate
 
-One job: take a verdict from the current conversation and write it to the Bug Candidates <wiki> DB. No investigation, no <task-tracker> creation.
+**Единственный writer для Bug Candidates DB.** Все остальные скиллы (bug-dig, bug-review) делегируют запись сюда. Schema живёт здесь и в `bug-review/references/<wiki>-schema.md`.
 
-## Context
+## Constants
 
-Bug Candidates DB is a discovery tool — it holds bugs surfaced by bug-review (weekly scan). Call bug-nominate when the investigated bug came from the Candidates DB or you explicitly want to track it there. Not every bug needs to be in <wiki> — bugs that go straight to <task-tracker> don't need a <wiki> row.
+- `BUG_CANDIDATES_DS_ID` = `26b9b9ff63194e88af44b30a6978600d`
+- `BUG_CANDIDATES_DS_URL` = `collection://26b9b9ff63194e88af44b30a6978600d`
+
+Schema → `bug-review/references/<wiki>-schema.md`.
+
+---
 
 ## Inputs
 
-- Verdict already in the chat (from a bug-dig run)
-- Or: explicit bug summary + verdict decision given by the user directly
+Принимает в любой комбинации:
 
-## DB reference
-
-| | Value |
-|---|---|
-| Data source ID | `26b9b9ff-6319-4e88-af44-b30a6978600d` |
-| Data source URL | `collection://26b9b9ff-6319-4e88-af44-b30a6978600d` |
-| Database page | https://www.<wiki>.so/c1e7bbdea35a4ccaa2aa115ef51d885e |
-
-## Properties
-
-| Property | Type | What to set |
+| Field | Required | Notes |
 |---|---|---|
-| `Title` | title | Short symptom, 1 line |
-| `Fingerprint` | rich_text | e.g. `<error-monitoring>:<your-error-monitoring-project>-3fqz`, `<task-tracker>:1214140404778710`, `manual:short-slug` — always lowercase |
-| `Status` | select | `Active` (default), `Tracked` (<task-tracker> ticket exists), `Closed`, `Regression` |
-| `Sources` | multi_select | `<error-monitoring>`, `<task-tracker>`, `<metrics>`, `<analytics>`, `<vcs>`, `<data-warehouse>`, `<wiki>` |
-| `Signal refs` | rich_text | Raw pointers: <error-monitoring> IDs, <task-tracker> GIDs, commit hashes, <logs> queries |
-| `First seen` | date | Today — only when creating a new row |
-| `Last seen` | date | Today |
-| `Weeks seen` | number | `1` for new rows; increment existing by 1 |
-| `Severity hint` | select | `Critical` / `High` / `Medium` / `Low` |
-| `<task-tracker> link` | url | URL if ticket already exists |
-| `Trend` | select | `New` for new rows; leave unchanged for updates (bug-review recalculates on next weekly run) |
-| `Verdict` | rich_text | Full verdict text from bug-dig or user summary |
+| `title` | yes | Page title, 1 line |
+| `fingerprint` | yes | Lowercase deterministic ID — `<error-monitoring>:<your-error-monitoring-project>-3fqz` / `<task-tracker>:1214140404778710` / `<data-warehouse>:tool=X:reason=Y` / `manual:short-slug` |
+| `status` | yes | `Active` / `Tracked` / `Closed` / `Meta` / `Regression` |
+| `verdict` | recommended | `Prod bug` / `Latent prod bug` / `<error-monitoring> noise` / `Analytics gap` / `Preventive` / `Meta / Risk signal` / `Protected` |
+| `user_impact` | recommended | `Yes` / `No` / `Unknown` |
+| `severity` | recommended | `Critical` / `High` / `Medium` / `Low` |
+| `sources` | recommended | array из <error-monitoring> / <metrics> / <data-warehouse> / <analytics> / <vcs> / <task-tracker> / <wiki> |
+| `trend` | optional | `New` для new; для updates не трогать (bug-review пересчитает) |
+| `asana_link` | optional | URL если ticket существует |
+| `body_markdown` | optional | Полное расследование. Если передан — пишется в content страницы. Если нет — см. правила ниже. |
+| `silent` | optional, default `false` | `true` → пишет молча без draft+confirm. Используется bug-review для batch ops. |
 
-Date format: `date:First seen:start = YYYY-MM-DD`, `date:First seen:is_datetime = 0`.
+Если в чате уже есть полный verdict от bug-dig — забрать данные оттуда.
+
+---
+
+## Body markdown — где живёт расследование
+
+**Полное расследование = content страницы**, не properties. Schema cleanup от 2026-04-30.
+
+Каноничный шаблон body (используется bug-dig + bug-nominate):
+
+```markdown
+## Symptom
+
+<что видит пользователь / что сломано — 1-2 параграфа>
+
+## Verdict
+
+<одна строка с вердиктом + причиной>
+
+## Signal refs
+
+<bullet-list: <error-monitoring> IDs, <task-tracker> GIDs, <logs> queries, commit hashes, file paths>
+
+## Root Cause
+
+<параграф(ы) — почему это происходит, с кодовыми ссылками / номерами строк>
+
+<!-- Mirrors task-create § Action items (имя секции синхронизировано) -->
+## Action items
+
+<директивный список действий команды на продуктовом языке. <wiki> = research doc, поэтому здесь можно держать несколько вариантов фикса (config / guard / systemic) для дальнейшего обсуждения. На <task-tracker> попадает уже выбранный план через task-create — там action items отбираются и сопровождаются метками уровней (Backend/Frontend, Hot-fix/Proper/Architectural, Required/UX/Optional) только когда правки разные по природе.>
+
+## User Impact
+
+<параграф — financial / UX / counts>
+
+## Source data
+
+<bullet-list: какие queries / files / commits легли в основу>
+```
+
+Секции можно опускать если нерелевантно (preventive — без User Impact; risk signal — без Action items; bug-review-минимум — только Symptom + Signal refs).
+
+**Минимальный body** для bug-review при создании нового signal (когда расследования ещё нет):
+
+```markdown
+## Symptom
+
+<title или 1 строка из source>
+
+## Signal refs
+
+<source refs: <error-monitoring> IDs, <task-tracker> GIDs, commits, queries>
+```
+
+---
 
 ## Workflow
 
-### Step 1 — Draft in chat
+### Step 1 — Resolve mode & gather inputs
 
-Show the user what will be written before touching <wiki>:
-- Title, Fingerprint, Status, Severity hint, Verdict (truncated to ~3 lines)
+- `silent=true`? Пропустить Step 2 (draft+confirm), идти сразу в Step 3.
+- `silent=false` (default): идём в Step 2.
 
-Get confirmation ("ок", "пиши", "да") before proceeding.
+### Step 2 — Draft в чат (interactive mode only)
 
-### Step 2 — Check for existing row
+Покажи в чате:
+- Title, Fingerprint, Status, Verdict, User Impact, Severity
+- Первые 2-3 строки body (Symptom + Verdict)
+- Mode: `CREATE` / `UPDATE properties only` / `UPDATE + replace body`
 
-```
+Жди подтверждения: «ок» / «пиши» / «да». Без подтверждения write-операции не делаем.
+
+### Step 3 — Find existing by fingerprint
+
+```python
 mcp__notion__notion-search(
-  query="<fingerprint>",
-  filters={},
-  data_source_url="collection://26b9b9ff-6319-4e88-af44-b30a6978600d"
+  query=<fingerprint>, filters={},
+  data_source_url=BUG_CANDIDATES_DS_URL,
+  page_size=10
 )
 ```
 
-`<wiki>-search` does **semantic search**, not exact match — it can return false positives for similar fingerprints. After getting results, fetch each candidate with `<wiki>-fetch` and verify that the `Fingerprint` property **contains** the searched fingerprint before updating. If no verified match → Step 4 (create).
+`<wiki>-search` semantic, не exact. **Частичное совпадение fingerprint ок**, если остальные поля (title, sources) подходят по смыслу. Fetch топ-3 кандидата через `<wiki>-fetch`, выбрать тот, чей `Fingerprint` property содержит искомую часть, ИЛИ чей title совпадает по сути.
 
-### Step 3 — Update existing row
+Found → Step 4. Not found → Step 5.
 
-`mcp__notion__notion-update-page(page_id=<found_id>, command="update_properties", properties={...}, content_updates=[])`
+### Step 4 — UPDATE existing
 
-Update: `Verdict`, `Status`, `Last seen`, `Severity hint`, `<task-tracker> link` (if now known).
-Increment `Weeks seen` by 1.
-Do NOT overwrite `First seen`.
+```python
+mcp__notion__notion-update-page(
+  page_id=<found_id>,
+  command="update_properties",
+  properties={
+    Status, Verdict, "User Impact", Severity,
+    "date:Last seen:start", "Weeks seen", "<task-tracker> link",
+    Sources,  # merge с existing — если новый source появился
+    Fingerprint,  # перезапись допустима
+  },
+  content_updates=[]
+)
+```
 
-### Step 4 — Create new row
+**Bumps:**
+- `Last seen` → today
+- `Weeks seen` += 1 **только если ISO-неделя сменилась** относительно предыдущего last_seen (idempotent для daily/multi-run в одну неделю)
+- `First seen` — НЕ трогать
+- `Trend` — НЕ трогать (bug-review пересчитает)
 
-`mcp__notion__notion-create-pages(parent={type:"data_source_id", data_source_id:"26b9b9ff-6319-4e88-af44-b30a6978600d"}, pages=[{properties:{...}}])`
+**Body:**
+- Если `body_markdown` передан → второй вызов update-page с `command="replace_content"`, `new_str=body_markdown`. Перезаписывает body полностью.
+- Если `body_markdown` НЕ передан → body не трогаем. **Это важно** — защищает investigation, написанную bug-dig'ом, от стирания weekly bumps.
 
-Fill all fields. Set `First seen` = `Last seen` = today, `Weeks seen` = 1.
+### Step 5 — CREATE new
+
+```python
+mcp__notion__notion-create-pages(
+  parent={type:"data_source_id", data_source_id:BUG_CANDIDATES_DS_ID},
+  pages=[{
+    properties: {
+      Title, Fingerprint, Status, Verdict, "User Impact", Severity, Sources,
+      "date:First seen:start": today,
+      "date:First seen:is_datetime": 0,
+      "date:Last seen:start": today,
+      "date:Last seen:is_datetime": 0,
+      "Weeks seen": 1,
+      Trend: "New",
+      "<task-tracker> link": <if any>
+    },
+    content: <body_markdown OR минимальный шаблон Symptom+Signal refs>
+  }]
+)
+```
+
+### Step 6 — Report
+
+В чат — всегда (даже при `silent=true`):
+
+```
+✓ Bug Candidates: <CREATE|UPDATE> «<title>»
+   url: <page url>
+   verdict: <verdict>, severity: <severity>, user impact: <yes/no>
+```
+
+Это даёт пользователю видимость даже при batch-операциях.
+
+---
+
+## Caller patterns
+
+### Called by bug-dig (interactive)
+
+bug-dig в Stage 7 после verdict собирает все args (включая `body_markdown` по каноничному шаблону) и вызывает `/bug-nominate` без `silent` flag → попадает в interactive mode → draft+confirm.
+
+### Called by bug-review (silent batch)
+
+bug-review в Layer 2 для каждого нового/изменённого signal вызывает `/bug-nominate silent=true`:
+- Новый signal → CREATE с минимальным body (только Symptom + Signal refs)
+- Existing signal → UPDATE properties only (без `body_markdown`) → defends investigation
+
+### Called manually
+
+Пользователь набирает `/bug-nominate` в чате — берёт verdict из чата, идёт в interactive mode.
+
+---
 
 ## Hard rules
 
-- ❌ Never call without a verdict already in the current conversation.
-- ❌ Never auto-run — user must explicitly call bug-nominate.
-- ❌ Never create <task-tracker> tasks — that's bug-create.
-- ✅ Always draft in chat and get confirmation before writing to <wiki>.
+- ❌ Без verdict / inputs в текущем разговоре или args
+- ❌ <task-tracker> tasks — это task-create
+- ❌ В UPDATE без `body_markdown` НЕ переписывать body — защита investigation от bug-review weekly bumps
+- ❌ В UPDATE НЕ трогать `First seen` и `Trend`
+- ❌ Не использовать удалённые property `Signal refs` / `Root Cause` / `Fix Options` (мигрировано 2026-04-30)
+- ✅ Draft + confirmation перед записью (interactive mode)
+- ✅ Полное расследование — в body страницы (Markdown), не в properties
+- ✅ Reporting в чат всегда — даже при `silent=true`

@@ -8,177 +8,195 @@ description: >-
   "добавь кейс", "создай тест-кейс", "напиши кейс".
 ---
 
-# TC Create — <product> <tms>
+# tc-create
 
-Create test cases in <tms> for <product> following established conventions.
-All data must come from a real source (<analytics>, code, <metrics>). Never invent steps or property values.
+## Constants
 
-Supports two modes:
-- **Single** — one TC, interactive, step by step (default)
-- **Bulk** — list of TCs, with duplicate check before creating
+- `<tms>_WEB` = `1`
+- `<tms>_BACK` = `2`
+- `<tms>_ADMIN` = `3`
 
-## MCP Tools Used
+Folders + enum values → `references/<tms>-api.md`.
 
-| Action | Tool |
-|---|---|
-| List existing TCs | `mcp__<tms>__<tms>_list_testcases` |
-| List folders | `mcp__<tms>__<tms>_list_folders` |
-| Create folder | `mcp__<tms>__<tms>_create_folder` |
-| Create TC | `mcp__<tms>__<tms>_create_testcase` |
-| Update TC | `mcp__<tms>__<tms>_update_testcase` (auto-fetches etag) |
-| Get TC details | `mcp__<tms>__<tms>_get_testcase` |
+Все данные — из реального источника (<analytics>, code, <metrics>, <error-monitoring>). Шаги/значения не выдумывать.
+
+**Два режима:**
+- **BACKLOG mode** (основной): скилл читает BACKLOG-скелеты из <tms>, пользователь выбирает N для исследования → апгрейд существующего скелета
+- **Direct mode** (fallback): пользователь описывает гэп текстом → создать TC с нуля (старый путь)
+
+Modes:
+- **Single** — interactive, default
+- **Bulk** — list of TCs с duplicate check
+
+---
+
+## Step 0 — Load BACKLOG queue
+
+Если пользователь не передал конкретный список гэпов текстом — загрузить BACKLOG из <tms>:
+
+```
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_WEB, status="BACKLOG")
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_BACK, status="BACKLOG")
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_ADMIN, status="BACKLOG")
+```
+
+Вывести список в чат, сгруппированный по priority:
+
+```
+🔴 HIGH (priority=1):
+  [TC-id] Web / Auth: exchange_token: valid one-time token → session
+  [TC-id] Back / Billing: Payblis webhook: missing signature → 401
+
+🟠 MEDIUM (priority=2):
+  ...
+
+🟡 LOW (priority=3):
+  ...
+
+Итого в BACKLOG: N TC. Какие создаём? Укажи ID или порядковые номера.
+```
+
+Если пользователь передал конкретный список текстом — пропустить Step 0, использовать Direct mode.
+
+---
 
 ## Hard Rules
 
-- **ACTIVE TCs require explicit confirmation before any change.** Never update or modify a TC with status=ACTIVE automatically. Always stop, show what you're about to change, and wait for the user to say yes. Only proceed after explicit approval in that message.
-- **DRAFT TCs** can be updated when the user agrees during a duplicate discussion.
-- **Status note:** MCP supports ACTIVE, DRAFT, and GUESS. For gap-report-generated TCs (source confirmed, steps not verified hands-on) → use **GUESS**.
+- **ACTIVE TC** — explicit confirmation перед любым изменением. Stop, show, wait. Только после явного "да".
+- **DRAFT TC** — обновляется после согласия в duplicate discussion.
+- Status: ACTIVE / DRAFT / GUESS. Gap-report TC (source confirmed, steps не верифицированы) → **GUESS**.
 
 ---
 
 ## Bulk Mode
 
-Triggered when the user provides a list of TCs to create (e.g. from a tc-gap report or manual list).
-
-### Bulk Step 1 — Fetch existing TCs
-
+### Step 1 — Fetch existing
 ```
-mcp__<tms>__<tms>_list_testcases(project_id=<id>)
+mcp__<tms>__<tms>_list_testcases(project_id=<<tms>_*>)
 ```
 
-### Bulk Step 2 — Duplicate check per TC
+### Step 2 — Duplicate check per TC
 
-For each TC in the list, check if an existing TC is a likely duplicate:
-- Split both titles into words (lowercased, strip punctuation)
-- A duplicate is suspected if **≥ 2 meaningful words overlap** (ignore: "не", "и", "в", "на", "→", ":", "=")
-- Only flag a suspected duplicate if the existing TC is in the **same project**
+- Split titles на слова (lowercase, без пунктуации)
+- Дубль если ≥2 значимых слов overlap (ignore: "не", "и", "в", "на", "→", ":", "=")
+- Только same project
 
-**If no duplicate suspected:** add to the creation batch silently.
+**Нет дубля:** silently в batch.
 
-**If duplicate suspected:** pause and discuss this TC with the user before continuing.
-
-Offer all three options regardless of status. But if the existing TC is **ACTIVE**, add a confirmation gate:
+**Есть дубль:** pause + discuss. Если existing ACTIVE — confirmation gate:
 ```
 ⚠️ Возможный дубликат:
-  Новый:        "<new title>"
-  Существующий: "<existing title>" [ACTIVE ⚠️ требует подтверждения для изменений]
+  Новый: "<title>"
+  Существующий: "<title>" [ACTIVE ⚠️ требует подтверждения]
 
-Создать новый / пропустить / обновить существующий?
+Создать новый / пропустить / обновить?
 ```
-If user chooses "обновить" and the TC is ACTIVE → ask once more:
-```
-Ты уверена, что хочешь изменить ACTIVE кейс "<title>"? Что именно меняем?
-```
-Only proceed after explicit yes.
 
-Wait for the user's answer before moving to the next TC.
+ACTIVE + "обновить" → ещё раз: "Что именно меняем?". Только после явного yes.
 
-### Bulk Step 3 — Show plan, wait for confirmation
+Wait per TC.
 
-After resolving all duplicates, show the full creation plan:
+### Step 3 — Show plan, wait
 
 ```
 Создаю N TC:
   ✅ [Project] "<title>" — папка, приоритет, статус
-  ✅ ...
-  ⏭ "<title>" — пропущен (дубликат по решению пользователя)
+  ⏭ "<title>" — пропущен (дубликат)
 
 Подтверждаешь?
 ```
 
-Only proceed after explicit confirmation.
+### Step 4 — Create batch
 
-### Bulk Step 4 — Create batch via MCP
-
-For each confirmed TC call `mcp__<tms>__<tms>_create_testcase`.
-
-If a folder doesn't exist yet — create it first with `mcp__<tms>__<tms>_create_folder`, then use the returned ID.
-
-After creation, update `references/<tms>-api.md` with any new folder IDs.
+`mcp__<tms>__<tms>_create_testcase` per TC. Папки — `mcp__<tms>__<tms>_create_folder` если нет, потом обновить `references/<tms>-api.md` с новым ID.
 
 ---
 
-## Single Mode Workflow
+## Single Mode
 
-**Step 1 — Clarify if not provided:**
-- Which project: Web (id=1), Back (id=2), or Admin (id=3)?
-- Which folder? (see `references/<tms>-api.md` for folder IDs)
-- What is the data source? Options:
-  - **<analytics>** — event name, properties, volume (`mcp__Amplitude__search`)
-  - **Code** — backend handler or frontend tracking file
-  - **<metrics>** — logs, metrics, error traces (`mcp__grafana__*`)
-  - **<error-monitoring>** — specific error/exception details (`mcp__sentry__list_issues`, `mcp__sentry__list_events`)
+**Step 1 — Clarify:**
+- Project: <tms>_WEB / <tms>_BACK / <tms>_ADMIN
+- Folder (см. references/<tms>-api.md)
+- Source: <analytics> (`mcp__Amplitude__search`) / Code / <metrics> / <error-monitoring>
 
-**Step 2 — Choose title pattern** (pick one based on TC type):
+**Step 2 — Title pattern:**
 
 | Type | Pattern | Example |
 |---|---|---|
-| <analytics> event + property | `EventName: property=value` | `Task Created: type=videogen` |
-| Negative / edge case | `condition → consequence` | `credits=0 → Task Created не стреляет` |
-| UI behavior / backend logic | `Object: short description` | `Promote Trusted: требует подтверждения` |
+| <analytics> event + property | `EventName: prop=val` | `Task Created: type=videogen` |
+| Negative/edge | `condition → consequence` | `credits=0 → Task Created не срабатывает` |
+| UI/backend logic | `Object: short description` | `Promote Trusted: требует подтверждения` |
 
 Rules:
-- Never repeat the folder name in the title
-- No fluff words: no "Успешная", "Корректная", "Понятная", no "happy path" as prefix
-- <analytics> data (event names, properties, values) in English with `property=value` notation
-- Descriptive part in Russian
+- Не повторять folder в title
+- Без флаффа: "Успешная", "Корректная", "happy path"
+- <analytics> data — английский, `prop=value` notation
+- Описательная часть — русский
 
-**Step 3 — Set priority** based on <analytics> event volume or criticality:
+**Step 3 — Priority:**
 
-| Priority | <analytics> volume /30d | API value |
+| Priority | Volume /30d | API |
 |---|---|---|
-| HIGH | >50 000 or critical path | 1 |
-| MEDIUM | 5 000–50 000 or important edge case | 2 |
-| LOW | <5 000 or rare scenario | 3 |
+| HIGH | >50K или critical path | 1 |
+| MEDIUM | 5K-50K или важный edge | 2 |
+| LOW | <5K или rare | 3 |
 
-**Step 4 — Set status:**
-- `GUESS` — source confirmed (code/<analytics>), but steps not verified hands-on. Default for gap-report TCs.
-- `DRAFT` — steps partially verified, work in progress.
-- `ACTIVE` — every step verified from a real source (code, <analytics> query, <metrics>), nothing assumed. Only set ACTIVE on explicit user request.
+**Step 4 — Status:**
+- `GUESS` — source confirmed, steps не верифицированы. Default для gap-report.
+- `DRAFT` — partially verified, WIP.
+- `ACTIVE` — каждый шаг верифицирован. Только по явному запросу.
 
-When in doubt — always GUESS.
+В сомнении — GUESS.
 
-**Step 5 — Write steps.** Format: one step per line, `action → expected result`.
-- Action: imperative ("Открыть задачу", "Нажать Retry")
-- Expected: what should happen ("credits возвращены", "HTTP 200")
-- Never invent UI button names or page names not seen in code
+**Step 5 — Steps.** Format: `action → expected` per line. Action — imperative. Expected — что должно случиться. UI button names не выдумывать.
 
-**Step 6 — Create via MCP:**
+**Step 6 — Create or upgrade:**
 
+**BACKLOG mode — апгрейд скелета:**
+Если TC пришёл из BACKLOG (есть ID):
+1. `mcp__<tms>__<tms>_get_testcase(id=<id>)` — прочитать скелет
+2. Из steps первой строки (GAP_META) извлечь: Source, SourceRef, GapReason — контекст для ресерча
+3. Провести deep research (код, <error-monitoring>, <analytics> — как обычно)
+4. `mcp__<tms>__<tms>_update_testcase(id=<id>, steps=<новые шаги>, status=<DRAFT или GUESS>, custom_fields={"LastReviewedAt": "<YYYY-MM-DD>"})`
+   - DRAFT если шаги проверены и уверен
+   - GUESS если есть сомнения (требует ручной верификации)
+5. Переместить в правильный folder если TC сейчас без папки: `mcp__<tms>__<tms>_add_to_folder(testcase_id=<id>, folder_id=<id>)`
+
+**Direct mode — создать с нуля** (только если нет ID из BACKLOG):
 ```
 mcp__<tms>__<tms>_create_testcase(
-  project_id=<id>,
-  title="<title>",
-  folder_id=<folder_id>,      # from references/<tms>-api.md
-  priority=<1|2|3>,
-  status="GUESS",             # default for gap-report TCs
-  steps="step1 → result1\nstep2 → result2\n..."
+  project_id=<<tms>_*>,
+  title="...", folder_id=<from references>,
+  priority=<1|2|3>, status="GUESS",
+  steps="step1 → result1\nstep2 → result2",
+  custom_fields={"LastReviewedAt": "<YYYY-MM-DD>"}
 )
 ```
 
-## Folder Management
+---
 
-List folders:
-```
-mcp__<tms>__<tms>_list_folders(project_id=<id>)
-```
-
-Create folder if missing:
-```
-mcp__<tms>__<tms>_create_folder(project_id=<id>, title="<name>", parent_id=0)
-```
-
-After creating a new folder, add its ID to `references/<tms>-api.md`.
-
-## Updating TCs
+## Folders
 
 ```
-mcp__<tms>__<tms>_update_testcase(id=<tc_id>, title="...", priority=..., status="...", steps="...")
+mcp__<tms>__<tms>_list_folders(project_id=<<tms>_*>)
+mcp__<tms>__<tms>_create_folder(project_id=<<tms>_*>, title="...", parent_id=0)
 ```
 
-Etag is fetched automatically — no manual etag management needed.
+После создания — добавить ID в `references/<tms>-api.md`.
 
-## Additional Resources
+---
 
-- **`references/<tms>-api.md`** — folder IDs per project, valid enum values
-- **<error-monitoring> MCP** — use `mcp__sentry__list_issues` / `mcp__sentry__list_events` to verify real error messages and stack traces when writing steps for error-path TCs
+## Update
+
+```
+mcp__<tms>__<tms>_update_testcase(id=<tc_id>, title=..., priority=..., status=..., steps=...)
+```
+
+Etag — автоматически.
+
+---
+
+## Resources
+
+- `references/<tms>-api.md` — folder IDs per project, enum values
+- <error-monitoring> MCP — `list_issues`/`list_events` для error-path TC steps

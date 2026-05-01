@@ -9,181 +9,225 @@ description: >-
   "актуализируй задачу в <task-tracker> по X".
 ---
 
-# Bug Dig — <product> bug investigation flow
+# bug-dig
 
-Decide: is this a real production bug, <error-monitoring> noise, theoretical code risk, or something already protected by architecture? Write the verdict to the Bug Candidates <wiki> DB. If a matching <task-tracker> ticket already exists — comment on it. **Never** create a new <task-tracker> ticket automatically; recommend one to the user and let them decide.
+## Constants
 
-The output quality beats speed. Never skip the "user impact" section — that's the load-bearing judgment.
+- `SENTRY_PROD` = `<your-error-monitoring-project>`
+- `LOKI_PROD_BACKEND` = `{environment="prod", service_name="backend"}`
+- `WRAPPER_PATH` = `backend/infra/external/clients/http/session/wrapper.py:35-44`
+- `DB_TABLES_PATH` = `backend/infra/database/psql/tables/`
 
-## Inputs the user may give
+Decide: real prod bug / <error-monitoring> noise / theoretical risk / already protected? Verdict — в чат. Если есть matching <task-tracker> ticket — комментарий на нём. **Never** auto-create <task-tracker> ticket.
 
-- <error-monitoring> issue ID (e.g. `<ERROR-ID>-3FQZ`)
-- <task-tracker> task ID or URL
-- Raw symptom description ("500 at checkout for some users")
-- <logs> log snippet
-- A handler file path or code location
+Output quality > speed. Никогда не пропускать "user impact" — load-bearing judgment.
 
-Pick whichever is present and derive the rest.
+---
 
-## MCP tools used
+## Root cause principle
+
+The root cause is **always in the system** — never in user behavior. If your conclusion is "user did something wrong" — that is not a valid root cause. Reframe: why does the system allow or not handle this user action gracefully? Keep digging.
+
+A valid root cause must point to a specific line, function, service, or missing validation in the codebase — not to user behavior.
+
+---
+
+## Stage 0 — Sync repos
+
+Перед чтением кода — `/git-refresh` (pull all 3 <product> repos + `code-review-graph update`). Если уже выполнялся в этой сессии — пропустить.
+
+Без свежего кода диагноз может быть на старой версии handler'а / DB-схемы / git log.
+
+---
+
+## Inputs
+
+- <error-monitoring> issue ID (`<ERROR-ID>-3FQZ`)
+- <task-tracker> task ID/URL
+- Symptom ("500 at checkout for some users")
+- <logs> snippet
+- Handler path или code location
+
+Взять что есть, остальное — derive.
+
+---
+
+## MCP
 
 | Stage | Tool |
 |---|---|
-| <error-monitoring> — find issues | `mcp__sentry__list_issues`, `mcp__sentry__find_projects` |
-| <error-monitoring> — issue detail | `mcp__sentry__get_sentry_resource` (types: `issue`, `event`, `breadcrumbs`) |
-| <error-monitoring> — events in issue | `mcp__sentry__list_issue_events` |
-| <logs> — discover labels | `mcp__grafana__list_loki_label_names`, `mcp__grafana__list_loki_label_values` |
-| <logs> — logs | `mcp__grafana__query_loki_logs` |
-| <analytics> | `mcp__Amplitude__get_context`, `mcp__Amplitude__search` |
-| <wiki> | `mcp__notion__notion-search`, `mcp__notion__notion-fetch` |
-| <task-tracker> | `mcp__asana__asana_get_task`, `mcp__asana__asana_update_task`, `mcp__asana__asana_create_task_story` |
-| Git log | Bash `git log` in the target repo |
+| <error-monitoring> — find | `list_issues`, `find_projects` |
+| <error-monitoring> — issue | `get_sentry_resource` (types: `issue`, `event`, `breadcrumbs`) |
+| <error-monitoring> — events | `list_issue_events` |
+| <logs> — labels | `list_loki_label_names`, `list_loki_label_values` |
+| <logs> — logs | `query_loki_logs` |
+| <analytics> | `get_context`, `search` |
+| <wiki> | `<wiki>-search`, `<wiki>-fetch` |
+| <task-tracker> | `asana_get_task`, `asana_update_task`, `asana_create_task_story` |
+| Git | Bash `git log` |
 
-See `references/<logs>-recipes.md` for ready-to-paste LogQL queries.
+LogQL recipes → `references/<logs>-recipes.md`.
 
 ---
 
 ## Workflow
 
-Run the stages sequentially. Skip a stage only with reason (noted in the final artifact).
-
 ### Stage 1 — <error-monitoring>: scope, scale, tags
 
-Goal: establish scale and find the real culprit path.
+1. Symptom only → `list_issues(projectSlugOrId=SENTRY_PROD, statsPeriod=30d)` (default 14d), filter keyword, sort `freq`
+2. `get_sentry_resource(resourceType="issue", resourceId="<ERROR-ID>-XXXX")` — first event, tags, HTTP request, replays
+3. `get_sentry_resource(resourceType="breadcrumbs", resourceId=...)` — **HTTP call order**, SQL pre/post error, external URLs
+4. `list_issue_events` — multiple events across culprits → cross-handler spread (same groupID на разных endpoints = shared external dep)
 
-1. If only a symptom is given, `mcp__sentry__list_issues` with the right `projectSlugOrId=<your-error-monitoring-project>` and filter by keyword + `statsPeriod=30d` (default is 14d). Sort `freq` to see fattest issues first.
-2. For the candidate issue, `mcp__sentry__get_sentry_resource(resourceType="issue", resourceId="<ERROR-ID>-XXXX")` — captures the first event, tags, HTTP request, related replays.
-3. `mcp__sentry__get_sentry_resource(resourceType="breadcrumbs", resourceId=...)` — **this is where you find HTTP call order**, SQL statements before/after the error, external URL hits.
-4. `mcp__sentry__list_issue_events` to see multiple events across culprits — this reveals cross-handler spread (same groupID hitting several endpoints means a shared external dependency).
+**Pitfalls:**
+- Default statsPeriod 14d → pass `"30d"` для месяца
+- <error-monitoring> query: НЕ `OR`/`AND` — отдельные calls
+- `get_sentry_resource(resourceType="event", ...)` — без URL, errors. Use `breadcrumbs` с URL, или bare resourceId
+- HTML body 5KB inflates tokens → `list_issue_events` для counts
 
-**Pitfalls**
-- Default `statsPeriod` is 14d. Pass `"30d"` for monthly views.
-- `OR` and `AND` are NOT supported in <error-monitoring> query syntax — issue separate calls.
-- `get_sentry_resource(resourceType="event", ...)` — don't pass URL with this, it errors. Use `breadcrumbs` resourceType with URL, or bare resourceId otherwise.
-- Error body can be a 5KB HTML dump that inflates token usage — prefer `list_issue_events` when you only need counts.
+### Stage 2 — <logs>: tracebacks + URLs
 
-### Stage 2 — <logs>: verbatim tracebacks and URLs
+<error-monitoring> группирует по error message — external URL часто truncated. <logs> — raw traceback.
 
-<error-monitoring> groups by error message, so the external URL is often truncated. <logs> has the raw traceback. This is how you find the exact failing dependency.
+Stream: `LOKI_PROD_BACKEND`. Labels: `environment` / `service_name` (не `env`/`app`).
 
-**Stream selector for <product> prod backend:**
+**Killer recipe** (traceback с URL когда <error-monitoring> показывает HTML body):
 ```
-{environment="prod", service_name="backend"}
-```
-
-Note: labels are `environment` / `service_name` (not `env` / `app` — that was wrong in old memory). See `references/<logs>-recipes.md`.
-
-**Killer recipe** (get traceback with URL when <error-monitoring> only shows HTML body):
-```
-{environment="prod", service_name="backend"} |= "ClientResponseError" != "<!DOCTYPE"
+LOKI_PROD_BACKEND |= "ClientResponseError" != "<!DOCTYPE"
 ```
 
-**Gotchas**
-- Logged HTML bodies blow the token budget fast. Always apply `!= "<!DOCTYPE"` early when searching for `session.wrapper` errors.
-- For scale metrics use `sum(count_over_time({...} |= "..." [1h]))` with `queryType="range"` and `stepSeconds=3600`.
+**Gotchas:**
+- Logged HTML bodies blow tokens → `!= "<!DOCTYPE"` для session.wrapper errors
+- Scale metrics: `sum(count_over_time({...} |= "..." [1h]))`, `queryType="range"`, `stepSeconds=3600`
 
 ### Stage 3 — Code review
 
-Read the handler that's the <error-monitoring> culprit. Look for:
+Read culprit handler:
 
-1. **Transaction boundaries** — where is `sub_credits` / `add_credits`? Where is `transaction_manager.commit()`? Is there a `try/except` between them that could swallow an exception and skip rollback?
-2. **External callers after the debit/credit** — which of them raise vs swallow? Services like `<internal-service>` and `<third-party-service>` swallow `ClientResponseError` internally via `try/except` + warning log. `<analytics>.track_event` is batched. `dbus.publish` may raise.
-3. **Idempotency** — is there an app-level `get_by_X` check before the insert? Is there a DB UNIQUE constraint on the key the check covers?
-4. **Wrapper behavior** — `backend/infra/external/clients/http/session/wrapper.py:35-44` logs the response body at ERROR level **before** raising. That's how every swallowed `ClientResponseError` still lands in <error-monitoring> under the caller's culprit. If you see mysterious "error in handler, but transaction committed fine" pattern — this is almost always it.
+1. **Transaction boundaries** — `sub_credits`/`add_credits`, `transaction_manager.commit()`. Try/except между ними может swallow exception и skip rollback
+2. **External callers после debit/credit** — кто raise vs swallow. `<internal-service>`, `<third-party-service>` — swallow `ClientResponseError` через try/except + warning log. `<analytics>.track_event` — batched. `dbus.publish` — может raise
+3. **Idempotency** — app-level `get_by_X` перед insert + DB UNIQUE constraint
+4. **Wrapper** — `WRAPPER_PATH` логирует body в ERROR **перед** raise. Так swallowed `ClientResponseError` всё равно лендится в <error-monitoring> под culprit caller'а. Pattern "error in handler, but transaction committed fine" — почти всегда это.
 
-**DB schema check** (important for race/idempotency verdicts):
+**DB schema check** (race/idempotency):
 ```
-backend/infra/database/psql/tables/<table>.py
+DB_TABLES_PATH<table>.py
 ```
-Look for `unique=True` on relevant columns.
+`unique=True` на нужных колонках.
 
 ### Stage 4 — Git correlation
 
-For deploys near `first_seen`:
+Деплои около `first_seen`:
 ```bash
 git log --all --format='%ad %h %s' --date=short --since='YYYY-MM-DD' --until='YYYY-MM-DD' | head -30
 ```
 
-If `first_seen` lines up with a `feat: <service>` commit, follow-up with:
+Совпадение first_seen с `feat: <service>` commit:
 ```bash
-git show --stat <commit_hash>
-git log --all --format='%ad %h %s' --date=short --follow <file-path-from-traceback>
+git show --stat <hash>
+git log --all --format='%ad %h %s' --date=short --follow <file>
 ```
-Identify the commit author → suggested Fix owner in the ticket.
+Author → suggested Fix owner.
 
-### Stage 5 — Cross-MCP evidence (optional, boosts ticket quality)
+### Stage 5 — Cross-MCP (optional, boosts quality)
 
-- **<analytics>** — `mcp__Amplitude__get_context` for projectId and plan quota. Useful to argue "primary analytics flow independently, we can disable the broken secondary service".
-- **<wiki>** — `mcp__notion__notion-search` for product/engineering context (<internal-service> case: vision doc explained why the service was added). Good for "do we still need this at all?" questions.
-- **<metrics> metrics** — for scale graphs if a visual would help (rare for this flow).
+- <analytics> — `get_context` для projectId/quota; "primary analytics flow OK, можно отключить broken secondary"
+- <wiki> — `<wiki>-search` для product context (<internal-service>: vision doc объяснил почему сервис добавлен)
+- <metrics> metrics — для visual scale (rare)
 
 ### Stage 6 — Verdict
 
-Pick one. Put it on top of the output.
+Один вариант, наверху output:
 
 | Verdict | Criteria |
 |---|---|
-| **Real prod bug** | <error-monitoring> + <logs> evidence of non-zero affected users, exception path actually reaches the user, no architectural protection. → verdict in chat; use bug-nominate to record to Bug Candidates DB; recommend ticket to user; do NOT auto-create. |
-| **<error-monitoring> noise (tech debt)** | Exception swallowed inside caller, transaction commits, user flow intact. Low-priority / tech debt in verdict. TL;DR about <error-monitoring> quota / dashboard clutter. |
-| **Theoretical risk — keep open low / preventive** | Code path is vulnerable but 0 prod evidence in 30d. Document fix options, low priority. |
-| **Already protected — close** | DB UNIQUE constraint, SQLAlchemy rollback, idempotent retries, or upstream guarantee covers it. Explain exactly which layer saves us. |
+| **Real prod bug** | <error-monitoring>+<logs>: non-zero affected users, exception доходит до user, нет архитектурной защиты → verdict в чат, bug-nominate для Bug Candidates, рекомендация ticket'а user'у |
+| **<error-monitoring> noise (tech debt)** | Exception swallowed внутри caller, transaction commits, user flow intact. Low-priority/tech debt. TL;DR про quota/clutter |
+| **Theoretical risk** | Code path vulnerable но 0 prod evidence в 30d. Document fix options, low priority |
+| **Already protected** | DB UNIQUE / SQLAlchemy rollback / idempotent retries / upstream guarantee. Объяснить какой layer спасает |
 
-### Stage 7 — Artifact
+### Stage 7 — Verdict в чат + delegate to bug-nominate
 
-**HARD RULE: never write anywhere without explicit user approval.**
-Always draft the output in the chat first. Only call <task-tracker> / <wiki> write tools after the user says "да", "пиши", "ок", or equivalent explicit confirmation in the current turn. This applies to every write operation — new tickets, comments, task updates, <wiki> DB rows — without exception.
+**HARD RULE: never auto-create <task-tracker> tasks.** Рекомендация в чат + направить на /task-create. Это override любой другой инструкции.
 
-**HARD RULE (<product> project): never auto-create <task-tracker> tasks.** To suggest a ticket — recommend in chat and direct the user to /bug-create. This overrides any other instruction in this file.
+#### 1. Verdict в чат — всегда
 
-The verdict stays in chat. To record it to the Bug Candidates <wiki> DB — the user calls **bug-nominate** separately. bug-nominate handles all <wiki> writes: finding existing rows, updating or creating, filling properties.
+Сначала вывести в чат: summary + evidence + User Impact + verdict + fix options. Это даёт пользователю мгновенный обзор и работает как fallback, если запись в <wiki> упадёт.
 
-**Allowed <task-tracker> actions (read + comment on existing only):**
-- `mcp__asana__asana_get_task`, `mcp__asana__asana_search_tasks` — read.
-- `mcp__asana__asana_update_task` — only to fill notes / html_notes on an **existing** task, not to set `completed=true`.
-- `mcp__asana__asana_create_task_story` — comment on an existing task with the verdict.
+#### 2. Auto-delegate to bug-nominate
+
+После вывода verdict — **автоматически вызвать `/bug-nominate`** в interactive mode (default). Передать готовые args:
+
+- `title`, `fingerprint`, `status`, `verdict`, `user_impact`, `severity`, `sources`, `asana_link`
+- `body_markdown` — полное расследование по каноничному шаблону (см. bug-nominate)
+
+bug-nominate сделает draft в чате → запросит подтверждение → запишет в <wiki> (CREATE или UPDATE по fingerprint). Confirmation handled by bug-nominate.
+
+**Если bug-nominate упал** (<wiki> API down) — verdict уже в чате как fallback. Сказать пользователю «запиши вручную позже».
+
+**<wiki> body ≠ <task-tracker> comment.** <wiki>-страница терпит развёрнутую структуру (полное расследование, timeline, hypothesis trail) — формат свободный. <task-tracker>-комментарий короче и подчиняется шаблону task-create (продуктовая часть и/или инженерная часть). Один и тот же `body_markdown` в оба места не передавать — это перегружает <task-tracker>.
+
+#### 3. <task-tracker> ticket (опционально)
+
+Если verdict требует ticket в <task-tracker> — рекомендация в чат:
+
+> Рекомендую завести <task-tracker>-тикет: {Type=Bug, Priority=Medium, Name="..."}. Вызови /task-create.
+
+**Если коммент в существующую задачу** — собирать через task-create comment composition (Product layer / Engineering layer / оба). Перед публикацией — self-check:
+
+1. Первый абзац отвечает на «что произошло» в продуктовых терминах (без классов/исключений)?
+2. User Impact содержит N + период + last seen?
+3. Action items читаются без знания кода проекта?
+4. Связанный отдельный issue вынесен в отдельную задачу/subtask, не в "Доп. находку"?
+
+Любое «нет» — переписать до публикации.
+
+**Allowed <task-tracker> actions** (read + comment only):
+- `asana_get_task`, `asana_search_tasks` — read
+- `asana_update_task` — только notes/html_notes existing task, НЕ `completed=true`
+- `asana_create_task_story` — comment с verdict
 
 **Forbidden:**
-- ❌ `mcp__asana__asana_create_task` — never call from bug-dig. Use /bug-create skill instead.
-- ❌ `asana_update_task` with `completed=true` — don't auto-close tickets.
-- ❌ `asana_delete_task` — never.
+- ❌ `asana_create_task` — никогда. Use /task-create
+- ❌ **"User did something wrong" as root cause** — не валидно. Reframe: почему система допустила/не обработала это действие? Valid root cause = конкретная строка/функция/сервис/отсутствующая валидация в коде
+- ❌ `asana_update_task(completed=true)` — не auto-close
+- ❌ `asana_delete_task`
 
-When verdict calls for a new ticket, end the chat reply with a one-liner like:
-> Рекомендую завести <task-tracker>-тикет: {Type=Bug, Priority=Medium, Name="..."}. Вызови /bug-create когда будешь готова.
+Если verdict требует ticket:
+> Рекомендую завести <task-tracker>-тикет: {Type=Bug, Priority=Medium, Name="..."}. Вызови /task-create.
 
 ---
 
-## Anti-patterns — check before submitting the artifact
+## Anti-patterns
 
-Read each one. If you catch yourself doing any of these, fix before posting.
-
-- ❌ **Creating <task-tracker> tasks from bug-dig.** Never call `mcp__asana__asana_create_task` — that's /bug-create. Suggest a ticket in chat, direct user to /bug-create. Logged incident 2026-04-24: "Не смей создавать тикеты в асана без моего разрешения!".
-- ❌ **Severity/priority in description body.** Use the Priority custom field only. Don't write `Severity: 🔴 Critical` in notes — it duplicates and desyncs with the field.
-- ❌ **Numbers from the old description without re-verification.** If the task came with "минимум N пользователей" from <metrics>, pull fresh <error-monitoring> numbers and explain the delta. <metrics> raw-500s and <error-monitoring> exception-events don't match 1:1 (different windows, different capture points).
-- ❌ **Implicit scope.** Always say explicitly "only Stripe" / "all providers" / "only Web". The Stripe auto-topup ticket was confusing until "Scope:" line was added.
-- ❌ **Missing "User impact: ДА/НЕТ" callout.** This is the single most important line. If no user impact, call it out loudly — it drives the priority.
-- ❌ **One fix option.** Offer 3, from cheapest to deepest (config → code guard → systemic wrapper fix).
-- ❌ **"Critical" priority because of noise.** Low / Technical-debt when user impact is zero, even if volume is huge.
-- ❌ **Setting Difficulty.** Skip this custom field entirely — developers own it.
-- ❌ **Missing deploy correlation when it matches.** If <error-monitoring> `first_seen` matches a git commit date one-to-one, include commit hash + author. That's the Fix owner.
-- ✅ **Структура задачи — обязательные секции:**
-  Каждая задача должна содержать: **TL;DR** (1-2 строки — обязательно, первым блоком, до того как читатель углубится в детали), **User Impact: ДА/НЕТ** (отдельная секция, не вшитая в текст), **Root Cause** или **Причина** (отдельный блок, не по ходу текста), **Как чинить**, **Источники**.
-  Если есть traceback — выносить в отдельную секцию **Traceback**.
-  Если есть критерии готовности — выносить в **Acceptance Criteria**.
-- ✅ **Difficulty не трогать** — это поле разработчиков. В вердикте и рекомендации тоже.
-- ✅ **Всегда указывать источники данных в задаче.** В конце описания добавлять секцию «Данные» — ссылки на <wiki>-документы, упоминание откуда брались цифры (<data-warehouse>, <analytics>, <error-monitoring>, <logs> и т.д.). Не нужно подробно — достаточно коротко обозначить откуда информация, чтобы разработчик мог перепроверить.
-- ✅ **Читаемость текста в <task-tracker> важна.** Используй `<ol>/<li>` для нумерованных блоков — не смешивай нумерацию с жирными заголовками-через-точку. Внутри `<li>` разбивай длинное содержимое на строки через `\n` — каждый факт на свою строку. Длинный список в одну строку — плохо читается человеком.
-- ✅ **Пустая строка до и после каждого заголовка секции.** Шаблон: `\n\n<strong>Заголовок</strong>\n\nконтент`. Исключение — самый первый блок на странице: перед ним пустая строка не нужна.
-- ❌ **Wrong tags in <task-tracker> html_notes.** <task-tracker> rejects with `xml_parsing_error` (400) for many common HTML tags. **Supported:** `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href="">`. **NOT supported:** `<p>`, `<br/>`, `<br>`, `<h1>`, `<h2>`, `<h3>`, `<hr/>`, `<pre>`. Always wrap in `<body>...</body>`. Learned from 2026-04-27 debugging session.
-- ❌ **`&#10;` for line breaks in html_notes.** It renders as literal text `&#10;`, not a newline. For visual spacing between sections use an actual `\n` newline character in the Python/curl string.
-- ❌ **Escaping `\.` `\-` etc. in <task-tracker> html_notes.** <task-tracker> rejects with 400. Pass plain characters; no backslash escapes.
+- ❌ <task-tracker> create from bug-dig — это /task-create (2026-04-24 incident: "Не смей создавать тикеты в асана без моего разрешения!"
+- ❌ Severity/priority в description — только Priority field
+- ❌ Numbers from old description без re-verification — pull fresh <error-monitoring>, объяснить delta. <metrics> raw-500s ≠ <error-monitoring> exception-events 1:1 (different windows/capture points)
+- ❌ Implicit scope — всегда "only Stripe" / "all providers" / "only Web"
+- ❌ Без "User impact: ДА/НЕТ" callout — single most important line, drives priority
+- ❌ Action items с именами классов/исключений/файловых путей в формулировке — переписать на продуктовый язык, code recipe идёт в `Possible root cause`. Тест: пункт читается без знания кода проекта
+- ❌ Same body для <wiki> и для <task-tracker> comment — разные аудитории, разный length budget. <wiki> = свободный формат, <task-tracker> = task-create comment composition
+- ❌ Связанный отдельный <error-monitoring> issue с собственным User Impact — заводить отдельную задачу/subtask, не "Доп. находка" в одном комменте
+- ❌ Action items 3 опции по умолчанию — теперь несколько options только когда правки **разные по природе** (Backend+Frontend, Hot-fix+Architectural). Если правки одной природы — один план без меток
+- ❌ "Critical" из-за noise — Low/Tech debt при zero user impact
+- ❌ Difficulty
+- ❌ Missing deploy correlation when matches — commit hash + author = Fix owner
+- ✅ **Структура задачи:** TL;DR (1-2 строки, первым) + User Impact (отдельная секция) + Root Cause + Как чинить + Источники. Traceback и Acceptance Criteria — отдельными секциями
+- ✅ Difficulty не трогать
+- ✅ Источники данных в задаче — секция "Данные" с ссылками на <wiki> + откуда цифры (<data-warehouse>/<analytics>/<error-monitoring>/<logs>)
+- ✅ `<ol>/<li>` для нумерованных, не bold-точка. Внутри `<li>` — `\n` per fact. Длинный список в строку — плохо
+- ✅ Пустая строка до и после section heading: `\n\n<strong>...</strong>\n\n...`. Первый block — без leading newline
+- ❌ **<task-tracker> html_notes wrong tags** — <task-tracker> 400 (`xml_parsing_error`). Supported: `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href="">`. NOT: `<p>`, `<br/>`, `<br>`, `<h1-3>`, `<hr/>`, `<pre>`. Wrap в `<body>...</body>`
+- ❌ `&#10;` — рендерится как литерал. Use real `\n`
+- ❌ `\.`, `\-` escapes — <task-tracker> 400
 
 ---
 
 ## Output
 
-The final artifact is one of:
-1. **Verdict in chat** — summary with evidence, User Impact ДА/НЕТ, decision, fix options. Always in chat first. To record to Bug Candidates DB — call **bug-nominate**.
-2. **Comment posted to existing <task-tracker> ticket** (if one exists) via `asana_create_task_story` — verdict summary with evidence.
-3. **Ticket recommendation** (if verdict warrants a new ticket): one-liner proposing Name + Type + Priority + suggested Fix owner. Direct user to /bug-create — never call `asana_create_task` from bug-dig.
+1. **Verdict в чат** — summary + evidence + User Impact + decision + fix options. Always chat first.
+2. **Auto-delegate to `/bug-nominate`** (interactive mode) — передать готовые args + body_markdown. bug-nominate сам сделает draft+confirm+write в Bug Candidates DB.
+3. **<task-tracker> comment** (если ticket существует) через `asana_create_task_story` — verdict с evidence
+4. **Ticket recommendation** — one-liner с Name + Type + Priority + Fix owner. Direct user → /task-create
 
-Always summarize what was done in 2-3 lines so the user can review fast.
+Summary 2-3 строки в конце для review.

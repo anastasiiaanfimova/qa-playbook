@@ -8,79 +8,66 @@ description: >-
   "найди пробелы", "какие кейсы пропущены".
 ---
 
-# TC Gap — Coverage Gap Analysis
+# tc-gap
 
-Find what's not covered in <tms>. Signal sources differ per project:
+## Constants
 
-| Project | Primary signal | Additional signal |
+- `<tms>_WEB` = `1`
+- `<tms>_BACK` = `2`
+- `<tms>_ADMIN` = `3`
+- `AMPLITUDE_PROD` = `<YOUR_ANALYTICS_PROJECT_ID>`
+- `BACKEND_HANDLERS_PATH` = `<product-dir>/backend/backend/app/handlers`
+- `ADMIN_PAGES_PATH` = `<product-dir>/admin/src`
+
+Run automatically — без clarifying questions.
+
+| Project | Primary signal | Additional |
 |---|---|---|
-| Web (id=1) | <analytics> named events | <error-monitoring> JS errors (frontend crashes, unhandled rejections) |
-| Back (id=2) | Backend handlers (`/backend/backend/app/handlers/`) | <error-monitoring> Python errors (unhandled exceptions in handlers) |
-| Admin (id=3) | Admin panel pages and their operations (`/admin/src`) | — |
-
-**<error-monitoring> MCP:** `mcp__sentry__list_issues`, `mcp__sentry__list_events`, `mcp__sentry__get_sentry_resource`
-
-Run automatically when invoked — no clarifying questions.
-
-## Workflow
-
-### Step 0 — Read existing <wiki> page
-
-Before doing anything else, fetch the current TC Gap page:
-**Page ID:** `34b98d8a-3c9b-81e7-8a16-c6d685dd0742`
-
-Use `mcp__notion__notion-fetch` with that ID.
-
-Extract and carry into the analysis:
-1. **Дата последнего запуска** — сравнить с сегодня, понять насколько данные устарели
-2. **Аномалии / под вопросом** — всё что было помечено ⚠️ в предыдущем репорте (например, `Payment Successful ≠ Payment Succeeded?`) → добавить в список "перепроверить" в текущем анализе
-3. **Раздел "📌 Заметки"** — если он есть на странице, сохранить его содержимое дословно: он написан вручную и НЕ перезаписывается при обновлении
+| Web (<tms>_WEB) | <analytics> events | <error-monitoring> JS errors |
+| Back (<tms>_BACK) | Backend handlers | <error-monitoring> Python errors |
+| Admin (<tms>_ADMIN) | Admin pages + operations | — |
 
 ---
 
-### Step 1 — Fetch all TCs from <tms> (parallel)
+## Step 0a — Sync repos
 
-```
-mcp__<tms>__<tms>_list_testcases(project_id=1)  # Web
-mcp__<tms>__<tms>_list_testcases(project_id=2)  # Back
-mcp__<tms>__<tms>_list_testcases(project_id=3)  # Admin
-```
-
-Build flat lists per project. Count totals.
+`/git-refresh` (pull all 3 + `code-review-graph update`). Без свежего кода `find` по `BACKEND_HANDLERS_PATH` и `ADMIN_PAGES_PATH` пропустит новые handlers/pages.
+Если `/git-refresh` уже выполнялся в этой сессии — пропустить.
 
 ---
 
-### Step 2 — Collect signals per project
+## Step 1 — Fetch all TCs (parallel)
 
-#### Web → <analytics> events
+```
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_WEB)
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_BACK)
+mcp__<tms>__<tms>_list_testcases(project_id=<tms>_ADMIN)
+```
 
-1. `mcp__Amplitude__get_context` → get projectId for Production (<YOUR_ANALYTICS_PROJECT_ID>)
-2. `mcp__Amplitude__get_events` with appId `<YOUR_ANALYTICS_PROJECT_ID>` → full event catalog
-3. Filter out events with prefixes: `$`, `[<analytics>]`, `[Experiment]`, `[Guides-Surveys]`
-4. Result: complete list of named product events.
+---
 
-#### Back → Backend handlers
+## Step 2 — Signals per project
 
-Read handler files to discover what's implemented:
+### Web → <analytics>
+```
+mcp__Amplitude__get_context  # → AMPLITUDE_PROD
+mcp__Amplitude__get_events(appId=AMPLITUDE_PROD)
+```
+Filter prefixes: `$`, `[<analytics>]`, `[Experiment]`, `[Guides-Surveys]`.
 
+### Back → Handlers
 ```bash
-find <product-dir>/backend/backend/app/handlers -name "*.py" | sort
+find $BACKEND_HANDLERS_PATH -name "*.py" | sort
 ```
+Per file: filename + first docstring/comment. Group: billing, generation, assets, auth, webhooks.
 
-For each handler file, extract: filename + first docstring or comment describing what it handles.
-Group into functional areas: billing, generation, assets, auth, webhooks.
-
-**Optional: enrich with <error-monitoring> errors**
-
-After reading handlers, check <error-monitoring> for high-frequency unhandled exceptions that might reveal untested error paths:
-
+**Optional <error-monitoring> enrichment:**
 ```
 mcp__sentry__list_issues(query="is:unresolved", limit=20)
 ```
+<error-monitoring> issues не покрытые Back TC → в gap. Priority по event count: HIGH >1000/day, MEDIUM 100-1000, LOW <100.
 
-For each <error-monitoring> issue not covered by a Back TC — add to the gap list with priority based on event count (HIGH >1000/day, MEDIUM 100–1000, LOW <100).
-
-If code is unavailable, use this known handler map as fallback:
+**Fallback handler map (если код недоступен):**
 
 | Area | Handlers |
 |---|---|
@@ -90,164 +77,150 @@ If code is unavailable, use this known handler map as fallback:
 | Generation — tasks | task create, task fail/rescue, credits refund, get processing |
 | Generation — calls | call create, execute, fail, rescue |
 | Generation — results | get task result |
-| Assets | upload, single upload, batch upload, finalize, presign, HEIC convert, preview, download, delete |
-| Asset groups | create group, add assets to group, get groups, download |
-| Auth | Google OAuth, email signup, login, logout, verify email, reset/change password, TMA login |
-| Socials — OAuth | Facebook/Instagram, Instagram, Threads, Twitter, YouTube: get_oauth_url, oauth_redirect |
-| Socials — connections | delete (disconnect), refresh_token, get_user_profile (per network × 5) |
-| Socials — publish | create_publication (per network × 5) |
+| Assets | upload, batch upload, finalize, presign, HEIC convert, preview, download, delete |
+| Asset groups | create/add/get/download |
+| Auth | Google OAuth, email signup, login, logout, verify email, reset/change password, TMA |
+| Socials — OAuth | FB/IG, Threads, Twitter, YouTube: get_oauth_url, oauth_redirect |
+| Socials — connections | delete, refresh_token, get_user_profile (×5) |
+| Socials — publish | create_publication (×5) |
 | Publications | create_batch, update_batch, publish, delete |
-| Personas | create, update, get, list, admin get/list, get generations, persona groups |
+| Personas | CRUD, admin get/list, generations, groups |
 | Notifications | get, dismiss, mark_read, mark_all_read |
-| Templates | create, edit, delete, get, list, use, react, admin get/list |
-| Photoshoot categories | create, update, delete, get, admin prompts CRUD |
-| Posts | create, edit, delete, get, list, global feed, admin get/list |
-| Analytics | overview, by_models, by_networks, calls, posts, publications, content_performance, refresh stats |
-| LoRA / ServiceLoRA | create, update, delete, file upload (multipart), list |
-| ComfyServers | create, update, delete, reset_health, check_health, sync_fleet |
-| Credit plans | create, update, delete, get, admin list |
-| Promocodes | create, update, delete, get_all, redeem, allowed_emails |
-| Tool restrictions | create, update, delete, get, admin list |
+| Templates | CRUD, use, react, admin |
+| Photoshoot categories | CRUD, admin prompts CRUD |
+| Posts | CRUD, global feed, admin |
+| Analytics | overview, by_models/networks, calls, posts, publications, content_performance, refresh |
+| LoRA / ServiceLoRA | CRUD, file upload (multipart), list |
+| ComfyServers | CRUD, reset_health, check_health, sync_fleet |
+| Credit plans | CRUD, admin list |
+| Promocodes | CRUD, redeem, allowed_emails |
+| Tool restrictions | CRUD, admin list |
 | Users (admin) | block/unblock, change_role, delete, promote_trusted, add_credits, update, credit_transactions |
 | Users (self) | get, update_nsfw, confirm_trust, delete, sessions, credit_transactions |
 | Transactions | admin list |
-| Stats (admin) | tasks: error_analysis, performance, provider_scoreboard, refund_analytics, user_segments; credits: stats, transactions, top_users |
+| Stats (admin) | tasks: error_analysis/performance/provider_scoreboard/refund_analytics/user_segments; credits: stats/transactions/top_users |
 | Domains | frontend_domains admin CRUD, banned_domains admin CRUD |
-| Banners | create, update, delete, dismiss, get (user + admin) |
-| Config / System | health check |
+| Banners | CRUD, dismiss, get (user + admin) |
+| Config | health |
 
-#### Admin → Admin panel operations
-
-Read admin source to discover pages:
-
+### Admin → Pages
 ```bash
-find <product-dir>/admin/src -name "*.tsx" -path "*/pages/*" | sort
+find $ADMIN_PAGES_PATH -name "*.tsx" -path "*/pages/*" | sort
 ```
 
-If unavailable, use this known operations map as fallback:
+**Fallback admin map:**
 
 | Page | Operations |
 |---|---|
-| Users / UserDetail | search, view profile, promote trusted, grant credits, block/unblock, change role, delete |
-| Tasks / TaskDetail | view task list, view status, view details, filter by status/userId |
-| Personas / PersonaDetail | create persona, edit persona, delete persona |
-| Templates | create, edit, delete, transfer stage→prod |
-| Loras / ServiceLoras | create, update, delete LoRA models; manage Klein presets |
-| Banners | create, edit, delete banners |
-| Promocodes | create, disable promocodes |
-| CreditPlans | create, update, delete credit plans |
-| ComfyServers | monitor servers, enable/disable, manage |
-| ToolRestrictions | set tool restrictions |
-| MollieRefunds | process refunds, list refunds, find payment |
-| Transactions | view transaction history |
-| TaskStats | analytics (6 tabs: Overview, Performance, Providers, Errors, Refunds, UserSegments) |
-| PhotoshootCategories | create, update, delete categories and prompts |
-| Posts / PostDetail | view post list, view post details (admin) |
-| ErrorAnalysis | view error patterns, drilldown |
+| Users / UserDetail | search, view, promote trusted, grant credits, block/unblock, change role, delete |
+| Tasks / TaskDetail | view list, status, details, filter by status/userId |
+| Personas / PersonaDetail | CRUD |
+| Templates | CRUD, transfer stage→prod |
+| Loras / ServiceLoras | CRUD; Klein presets |
+| Banners | CRUD |
+| Promocodes | create, disable |
+| CreditPlans | CRUD |
+| ComfyServers | monitor, enable/disable, manage |
+| ToolRestrictions | set restrictions |
+| MollieRefunds | refunds, list, find payment |
+| Transactions | history view |
+| TaskStats | 6 tabs: Overview, Performance, Providers, Errors, Refunds, UserSegments |
+| PhotoshootCategories | CRUD categories + prompts |
+| Posts / PostDetail | view list/details |
+| ErrorAnalysis | patterns, drilldown |
 | Domains | manage frontend domains |
-| Feed | view content feed |
-| AssetUpload | upload assets via admin |
+| Feed | view content |
+| AssetUpload | upload assets |
 
 ---
 
-### Step 3 — Cross-reference per project
+## Step 3 — Cross-reference
 
-**Web:** For each <analytics> event, check if any Web TC title contains all words from the event name (case-insensitive). Mark ✅ / ❌.
+**Web:** для каждого <analytics> event → есть ли Web TC где title содержит все слова event'а (case-insensitive). ✅/❌.
 
-**Back:** For each handler/area, check if any Back TC title contains keywords from that area. Match rule: at least one keyword from the handler description appears in the TC title.
+**Back:** для каждой area → есть ли Back TC где title содержит keyword из area description. Match: ≥1 keyword.
 
-**Admin:** For each page+operation pair, check if any Admin TC title covers it. Match rule: page name or operation keyword appears in TC title.
-
----
-
-### Step 4 — Output gap report
-
-```
-## TC Gap Report — <product>
-Date: YYYY-MM-DD
-<tms>: N total TC (Web: X | Back: Y | Admin: Z)
-
-### Web — <analytics> events (M checked, P% covered)
-
-❌ Gaps:
-| Event | Priority | Suggested TC title |
-|---|---|---|
-
-✅ Covered (top 5):
-| Event | TC |
-|---|---|
-
-### Back — Backend handlers (M areas checked, P% covered)
-
-❌ Gaps:
-| Handler area | Priority | Suggested TC title |
-|---|---|---|
-
-✅ Covered:
-| Handler area | TC |
-|---|---|
-
-### Admin — Panel operations (M ops checked, P% covered)
-
-❌ Gaps:
-| Page / Operation | Priority | Suggested TC title |
-|---|---|---|
-
-✅ Covered:
-| Page / Operation | TC |
-|---|---|
-```
-
-**Priority for gaps:**
-- HIGH: payment/auth/generation critical path, or high <analytics> volume (>50K)
-- MEDIUM: important feature with no coverage, medium volume (5K–50K)
-- LOW: edge case, low volume (<5K), view-only events
+**Admin:** для каждой page+op → есть ли Admin TC где title содержит page/operation keyword.
 
 ---
 
-### Step 5 — Update <wiki> page
+## Step 4a — Write BACKLOG to <tms>
 
-After producing the report, update the TC Gap page in <wiki>:
-**Page ID:** `34b98d8a-3c9b-81e7-8a16-c6d685dd0742`
-**URL:** https://www.<wiki>.so/TC-Gap-34b98d8a3c9b81e78a16c6d685dd0742
+Для каждого нового гэпа (не найдено TC в Step 3):
 
-Use `mcp__notion__notion-update-page` with `command: replace_content`.
+**Дедупликация перед созданием:** проверить существующие TC проекта. Если есть TC с `status IN (BACKLOG, GUESS, DRAFT)`, чей title совпадает по ≥2 ключевым словам с suggested title — пропустить, не создавать дубликат.
 
-**Структура страницы — строго в таком порядке:**
-
+Создать скелет:
 ```
-[Callout: дата запуска + coverage по проектам]
+mcp__<tms>__<tms>_create_testcase(
+  project_id=<проект>,
+  title=<suggested TC title из Step 3>,
+  status="BACKLOG",
+  priority=<1/2/3 по эвристике>,
+  folder_id=<ближайший подходящий folder>,
+  steps="GAP_META: source=<Source> | ref=<SourceRef> | reason=<GapReason> | detected=<YYYY-MM-DD> → (skeleton, awaiting tc-create)"
+)
+```
 
-[Авто-репорт: три секции Web / Back / Admin]
+**Эвристика приоритета:**
+- HIGH (1): payment / auth / generation critical path; <error-monitoring> >1000 events/day
+- MEDIUM (2): важная фича без покрытия; <error-monitoring> 100–1000 events/day
+- LOW (3): edge case; view-only; <100 events/day
 
 ---
 
-## 📌 Заметки
-[Содержимое из Step 0 — скопировать дословно если было.
-Если раздела не было — создать пустым. Пользователь добавляет сюда вручную.]
+## Step 4b — Mark STALE in <tms>
+
+Для каждого существующего TC, у которого изменился или исчез сигнал:
+- Handler переименован / удалён
+- <analytics> event удалён из таксономии
+- Admin-страница удалена
+- <error-monitoring> issue: ошибка пропала после деплоя и TC стал неактуальным
+
+Если TC уже STALE — обновить только GapReason (дописать новую причину), не создавать повторно.
+
+```
+mcp__<tms>__<tms>_update_testcase(
+  id=<TC id>,
+  status="STALE",
+  custom_fields={
+    "GapReason": "<старый reason если был> + [<дата>] <новая причина>",
+    "DetectedAt": "<YYYY-MM-DD>"
+  }
+)
 ```
 
-**Правила обновления:**
-- Callout и три секции репорта — всегда перезаписываются свежими данными
-- Раздел `## 📌 Заметки` — **всегда сохраняется**: взять содержимое из Step 0 и вставить без изменений
-- Если в Step 0 раздела не было — создать заголовок `## 📌 Заметки` с пустым телом
-- Ничего не удалять из раздела заметок, даже если кажется устаревшим — это ручной контент
+---
 
-### Step 6 (optional) — Create TCs for top gaps
+## Step 5 — Summary (chat only)
 
-If user says "create them" / "добавь кейсы":
-- Apply tc-create workflow for each (top 5 by priority)
-- Status: `GUESS` by default (source confirmed, steps not verified hands-on)
-- Folder per project: see `../tc-create/references/<tms>-api.md`
+Вывести в чат итоговый отчёт. <wiki> больше не обновляется.
 
-## Fallback: if <analytics> is unavailable
+Формат:
+```
+## TC Gap — <product> [дата]
+<tms>: N total (Web: X | Back: Y | Admin: Z)
 
-Skip Web <analytics> signals. Run Back and Admin analysis only.
-For Web, fall back to critical path check (payment, auth, generation, nsfw).
+### Новые BACKLOG-скелеты создано: N
+[список: TC title | project | priority | source]
+
+### Помечено STALE: N
+[список: TC id + title | причина]
+
+### Покрытие без изменений: N областей
+```
+
+---
+
+## Fallback
+
+<analytics> недоступен → пропустить Web <analytics>. Для Web — critical path check (payment/auth/generation/nsfw).
+- Если <tms> недоступен → пропустить Step 4a/4b, вывести только чат-отчёт с пометкой "⚠️ <tms> write skipped"
+- Если TC уже в статусе BACKLOG или STALE — не создавать дубликат, только обновить GapReason
 
 ## Notes
 
-- Web match is fuzzy word-bag (known limitation: "Post Scheduled" can false-match "Post Published: publishType=scheduled")
-- When in doubt about a match, mark as ❌ and note the ambiguity
-- Back and Admin matching is looser by design — handler areas are broad
-- Do not ask the user for scope — run all three projects and let them filter
+- Web match — fuzzy word-bag (известное ограничение: "Post Scheduled" может ложно матчить "Post Published: publishType=scheduled")
+- При сомнении — ❌ + note ambiguity
+- Back/Admin matching looser by design (areas широкие)
+- Не спрашивать scope — все три проекта

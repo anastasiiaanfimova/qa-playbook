@@ -21,17 +21,34 @@ Pull `main` on all three <product> repos and rebuild the knowledge graphs increm
 
 ## Workflow
 
-### Step 1 — Pull each repo
+### Step 1 — Check & pull each repo
 
 For each repo, run in sequence:
 
 ```bash
-cd <product-dir>/backend && git checkout main && git pull
-cd <product-dir>/frontend && git checkout main && git pull
-cd <product-dir>/admin && git checkout main && git pull
+# 1. Switch to main
+cd <product-dir>/backend && git checkout main
+
+# 2. Fetch remote (lightweight — no merge)
+git fetch origin main
+
+# 3. Count new commits on remote
+git rev-list HEAD..origin/main --count
 ```
 
-Capture output per repo: how many commits pulled (or "Already up to date.").
+If count == 0 → repo is up to date, **skip pull**, mark as "Already up to date."
+
+If count > 0 → pull:
+
+```bash
+git pull --ff-only
+```
+
+Repeat for `frontend` and `admin`.
+
+`--ff-only` — если local main разошёлся, не пробовать merge, упасть с ошибкой (это сигнал для разбора, а не молчаливый merge).
+
+Capture per repo: new commits count (or "Already up to date.").
 
 ### Step 2 — Update graphs
 
