@@ -66,6 +66,8 @@ mcp__<tms>__<tms>_list_testcases(project_id=<tms>_ADMIN, status="BACKLOG")
 - **DRAFT TC** — обновляется после согласия в duplicate discussion.
 - Status: ACTIVE / DRAFT / GUESS. Gap-report TC (source confirmed, steps не верифицированы) → **GUESS**.
 
+**UI context для написания шагов:** перед TC для конкретной страницы — `find <product-dir>/ui-snapshots/output -name "*<slug>*.md"`. Карточка покажет точные названия кнопок, инпутов, заголовков → копируй в шаги вместо угадывания. Подробнее → `<product-dir>/CLAUDE.md` секция "UI Snapshots Catalog".
+
 ---
 
 ## Bulk Mode

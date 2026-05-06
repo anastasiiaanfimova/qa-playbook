@@ -68,6 +68,8 @@ A valid root cause must point to a specific line, function, service, or missing 
 
 LogQL recipes → `references/<logs>-recipes.md`.
 
+**UI context (без браузера):** если баг про конкретную страницу, читай карточку из каталога `<product-dir>/ui-snapshots/output/` — там headings, buttons, inputs, errors всех страниц в 4 вариантах (desktop/mobile × light/dark) + state-overrides (paying-no, trusted-no, role-user, credits-zero). `find <product-dir>/ui-snapshots/output -name "*<slug>*.md"`. Подробнее → `<product-dir>/CLAUDE.md` секция "UI Snapshots Catalog".
+
 ---
 
 ## Workflow
@@ -216,7 +218,7 @@ bug-nominate сделает draft в чате → запросит подтве�
 - ✅ Difficulty не трогать
 - ✅ Источники данных в задаче — секция "Данные" с ссылками на <wiki> + откуда цифры (<data-warehouse>/<analytics>/<error-monitoring>/<logs>)
 - ✅ `<ol>/<li>` для нумерованных, не bold-точка. Внутри `<li>` — `\n` per fact. Длинный список в строку — плохо
-- ✅ Пустая строка до и после section heading: `\n\n<strong>...</strong>\n\n...`. Первый block — без leading newline
+- ✅ Section heading: `<strong>Заголовок</strong>` ставить **без** ведущих `\n\n` — `\n\n` перед `<strong>` рендерится как буквальный текст. Отступ после heading делать через следующий блочный элемент (`<ul>`, `<ol>`, текст).
 - ❌ **<task-tracker> html_notes wrong tags** — <task-tracker> 400 (`xml_parsing_error`). Supported: `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href="">`. NOT: `<p>`, `<br/>`, `<br>`, `<h1-3>`, `<hr/>`, `<pre>`. Wrap в `<body>...</body>`
 - ❌ `&#10;` — рендерится как литерал. Use real `\n`
 - ❌ `\.`, `\-` escapes — <task-tracker> 400
