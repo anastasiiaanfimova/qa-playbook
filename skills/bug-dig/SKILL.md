@@ -74,6 +74,21 @@ LogQL recipes → `references/<logs>-recipes.md`.
 
 ## Workflow
 
+### Stage 0.5 — Quick-triage (параллельно, 3 запроса сразу)
+
+До Stage 1 — запустить 3 запроса **параллельно**, чтобы получить «карту масштаба» за один round-trip:
+
+1. **<error-monitoring> scope** — `list_issues(SENTRY_PROD, query="<keyword>", sort="freq", statsPeriod="30d", limit=10)`
+2. **<logs> scale** — `query_loki_logs` с `count_over_time` за 24h по ключевому слову
+3. **CH context** (если есть entity ID: user, task, call) — counts по status за 24h через <metrics> datasource `efgtpv5l3vqpsc` (prod)
+
+**Читаем результат:**
+- <error-monitoring>>0 + <logs>>0 → нормальный путь Stage 1→5
+- <error-monitoring>=0 + <logs>=0 + user reported error → **browser-side error path** (Stage 2.1)
+- <error-monitoring>>0 + <logs>=0 → возможно staging event в prod project (3FVT pattern) — проверь `environment` tag
+
+---
+
 ### Stage 1 — <error-monitoring>: scope, scale, tags
 
 1. Symptom only → `list_issues(projectSlugOrId=SENTRY_PROD, statsPeriod=30d)` (default 14d), filter keyword, sort `freq`
@@ -101,6 +116,20 @@ LOKI_PROD_BACKEND |= "ClientResponseError" != "<!DOCTYPE"
 **Gotchas:**
 - Logged HTML bodies blow tokens → `!= "<!DOCTYPE"` для session.wrapper errors
 - Scale metrics: `sum(count_over_time({...} |= "..." [1h]))`, `queryType="range"`, `stepSeconds=3600`
+
+### Stage 2.1 — Browser-side errors path (<error-monitoring>=0, <logs>=0)
+
+CORS ошибки, JS fetch failures, download errors происходят в браузере — backend их не видит.
+
+**Симптомы:** user жалуется на скачивание/отображение, <error-monitoring>=0, <logs>=0 при явном пользовательском репорте.
+
+Шаги:
+1. **<analytics>** — `search("Results Download Error")` или соответствующий event → масштаб. Пример: 2026-05-06 CORS download bug — <error-monitoring>=0, <logs>=0, но <analytics>: 10,128 errors за 30 дней.
+2. **Code review** — `backend/infra/provider/asset.py:154` — `get_download_link()` возвращает прямой storage URL или проксированный?
+3. **Frontend** — `frontend/src/modules/assets/lib/download-utils.ts:24` — `fetch(url, {mode:'cors'})` — требует `Access-Control-Allow-Origin` от storage
+4. **Storage CORS** — prod (`storage.<product>.pro`) и staging имеют разные настройки. Cloudflare edge cache может кэшировать ответ без CORS headers (первый запрос без Origin → кэш без заголовка → последующие fail).
+
+Все download flow проходят через `downloadByAssetIds` / `downloadFileFromUrl` — CORS баг затрагивает все инструменты сразу.
 
 ### Stage 3 — Code review
 

@@ -58,6 +58,23 @@ description: >-
 
 ---
 
+## Pre-check — CRG доступность
+
+Шаги 7-9 используют code-review-graph MCP. Проверить **до** Шага 0:
+
+```bash
+python3 -c "import json,sys; d=json.load(open('$HOME/<product>/.claude/settings.local.json')); sys.exit(0 if 'code-review-graph-backend' in d.get('enabledMcpjsonServers', []) else 1)"
+```
+
+Если exit 1 (CRG выключен):
+1. Запустить: `bash ~/.claude/scripts/crg-enable.sh`
+2. Сообщить: «CRG включён в settings.local.json. Перезапусти Claude Code (или используй `claude-crg` в новом терминале) и вернись с тем же запросом — продолжу с Шага 0.»
+3. **Стоп.** Не пытаться продолжать без CRG — Шаги 7-9 без него не сработают, результат будет неполным.
+
+Если exit 0 (CRG включён) — продолжать с Шага 0.
+
+---
+
 ## Шаг 0 — Sync репозиториев
 
 Полный sync через `/git-refresh` (pull all 3 + `code-review-graph update`).

@@ -27,6 +27,7 @@ Without subcommand the **default is `view`** (the most common, safe action).
 |-----------|--------|------|------|
 | `view` (default) | `npm run viewer:open` | ~2 sec | "open viewer", "посмотреть снимки", "открой галерею" |
 | `run` | full Playwright refresh via runner | ~20 min | "обнови снимки", "новые скрины", "сделай свежие снапшоты" |
+| `run --since <ref>` | partial refresh based on frontend git diff | ~5 min typical | "обнови затронутые страницы", "снапшоты только для ветки" |
 | `state <label>` | ad-hoc DB toggle (outside runner) | ~5 sec per toggle | "сними под другим состоянием юзера", "state-overrides snapshot" |
 
 ### `/ui-snapshots view` — safe, fast, always
@@ -71,6 +72,42 @@ repo at the end.
 
 Live progress at `output/_progress.json` (heartbeat every 10 captures).
 Failures don't abort the run; baseline DB state always restored on exit.
+
+### `/ui-snapshots run --since <ref>` — selective rerun
+
+Запускает runner только по группам, которые могли измениться, по `git diff` во `frontend/` репо vs `<ref>`. Типичная экономия: 20 мин → 5 мин.
+
+```bash
+cd <product-dir>/ui-snapshots
+INFI=/Users/<user>/.claude/scripts/infisical-<product>-mcp.sh
+
+# Plan only (без захвата) — вернёт список групп или FULL_REQUIRED:
+node capture/affected-slugs.js --since main --frontend-repo <product-dir>/frontend
+
+# Запуск только затронутых групп:
+$INFI npm run runner -- --since main
+
+# Если global/shell файлы тоже затронуты — без флага скрипт упадёт с подсказкой:
+$INFI npm run runner -- --since main --auto-full   # запустить полный
+$INFI npm run runner -- --since main --auto-skip   # пропустить uncertain/full, гнать только confident
+```
+
+**Как работает mapper (`capture/affected-slugs.js`):**
+
+| Категория | Files matching | Действие |
+|-----------|----------------|----------|
+| `page` | `frontend/src/app/<route>/page.tsx`/`layout.tsx` | URL → STATIC_ROUTES → slug → groups из page-property-map.json |
+| `global` | root `app/layout.tsx`, `globals.css`, `styles/`, `providers.tsx`, `tailwind/postcss/next.config.*`, `package.json`, lockfile | full required |
+| `shell` | `components/(layout\|nav\|sidebar\|header\|footer\|shell)/*` | full required |
+| `lib` | `lib/api/*`, `hooks/*` | full required |
+| `uncertain` | `components/<other>/*` | вывести список, пользователь решает |
+| `ignore` | `*.test.tsx`, `*.spec.tsx`, `__tests__/`, `*.md`, `.gitignore`, `.eslintrc*` | пропустить |
+
+**Когда использовать:** в `branch-analyze` после `git diff` ветки; после своих локальных правок во frontend перед commit для swift visual check.
+
+**Когда НЕ использовать:** перед релизной полной верификацией (риск пропустить cross-cutting эффект из uncertain компонентов).
+
+---
 
 ### `/ui-snapshots state <label>` — ad-hoc DB toggle
 
