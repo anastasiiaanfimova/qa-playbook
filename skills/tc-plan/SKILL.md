@@ -1,100 +1,186 @@
 ---
 name: tc-plan
 description: >-
-  Управляет составом тест-планов в <tms>. Два режима: preview (помечает TC через cf__planmove=Add/Remove)
-  и apply (вносит изменения и очищает поле). Всегда таргетирует один конкретный план.
-  Trigger: "обнови план", "tc-plan Smoke", "tc-plan apply Regression-Billing".
+  Methodology for managing test plan composition — when a plan is best
+  modeled as a derived view over the test corpus instead of a curated
+  list, and the two-phase preview/apply pattern that keeps bulk
+  membership changes safe. Tool-agnostic — applies with any TMS that
+  supports a custom field on TCs and per-plan membership operations.
 ---
 
 # tc-plan
 
-## Constants
+Most teams treat a test plan as a hand-curated list of test cases. That
+works at small scale and breaks invisibly at larger scale: TCs drift in
+and out of relevance as features evolve, but the plan keeps pointing at
+yesterday's snapshot. This methodology models a plan as a **derived
+view** over the corpus, with explicit criteria and a safe update
+protocol.
 
-- `<tms>_WEB` = `1`
-- `<tms>_BACK` = `2`
-- `<tms>_ADMIN` = `3`
+## A plan is a query, not a list
 
-### Plan Criteria
+Each plan should have **formal criteria** that define what belongs in
+it. Examples:
 
-| Plan | project_ids | status | priority | testcase_type | folder_ids |
-|---|---|---|---|---|---|
-| `Smoke` | 1,2,3 | ACTIVE,DRAFT | 1 | SMOKE | — |
-| `Regression` | 1,2,3 | ACTIVE,DRAFT | — | REGRESSION | — |
-| `Regression-Billing` | 1,2,3 | ACTIVE,DRAFT | — | REGRESSION | Billing folders: 1,17,24 |
-| `Regression-Auth` | 1,2,3 | ACTIVE,DRAFT | — | REGRESSION | Auth folders: 13,16 |
+| Plan type | Criteria shape |
+|---|---|
+| `Smoke` | All ACTIVE/DRAFT TCs across products with `type=SMOKE`, priority HIGH |
+| `Regression` | All ACTIVE/DRAFT TCs with `type=REGRESSION` |
+| `Regression-<area>` | `Regression` filtered to the folders covering that area |
+| `Release-<version>` | TCs touched since a date / linked to specific tickets |
 
-Folder IDs → `../tc-create/references/<tms>-api.md`.
+Without explicit criteria, the plan accumulates whatever someone
+remembered to add and never reflects deletions. With criteria, the plan
+is reproducible: anyone running the same query gets the same set.
 
----
+## Drift is the default — explicit reconciliation is the cure
 
-## Hard Rules
+If you accept the "plan as query" model, every plan will drift between
+runs. New TCs land that match the criteria. Old TCs change status (an
+ACTIVE goes to STALE, a DRAFT gets archived). The plan composition
+needs to follow.
 
-- Всегда работать только с одним планом за раз
-- Preview не меняет состав плана — только ставит cf__planmove
-- Apply без preview не запускать (нужен staging перед применением)
-- Перед apply показать итоговый список что будет добавлено/убрано и ждать "да"
+Reconciliation is the act of comparing **current plan composition**
+against **what the criteria say it should be** and producing three
+buckets:
 
----
+- **ADD** — matches criteria, not currently in plan
+- **REMOVE** — currently in plan, no longer matches criteria
+- **No change** — in plan and still matches
 
-## Step 0 — Identify plan and mode
+Rebuilding the plan from scratch (drop all, add fresh) loses history,
+breaks linked test runs, and triggers churn in any audit trail. The
+diff approach preserves identity and minimizes change.
 
-Из аргументов извлечь:
-- `plan_name` (обязательно): один из плановых имён из Constants
-- `mode`: `preview` (default) или `apply`
+## The two-phase pattern — stage, then apply
 
-Если plan_name не распознан → вывести список доступных планов и остановиться.
+Bulk membership changes are one of the easiest places to silently break
+test runs. A plan can be referenced by automation, by a release
+checklist, by other people's saved searches. A surprise change of 30
+TCs in a Smoke plan cascades in unpredictable ways.
 
----
+The methodology splits the work into two phases:
 
-## Step 1 — Get current plan state
+### Phase 1: Preview (stage the diff via a visible marker)
+
+Compute the diff (ADD / REMOVE / no-change). Don't touch plan
+membership. Instead, **mark each affected TC with a custom field** that
+records the intent:
+
+- `marker = "Add"` — TC is staged to enter the plan
+- `marker = "Remove"` — TC is staged to leave the plan
+
+The marker field is the staging mechanism. Anyone opening the TC in
+the TMS UI sees it's pending a plan change. Anyone reviewing the plan
+can run a saved search to see all marked TCs and cross-check before the
+operation lands.
+
+Then output a summary:
 
 ```
-mcp__<tms>__<tms>_list_testplans(project_id=<первый из plan.project_ids>)
+Plan: <name>
++ Add (N): list of titles or IDs
+− Remove (M): list of titles or IDs
+= Unchanged: K TCs
+
+Review the markers in TMS, then run apply when ready.
 ```
 
-Найти план по имени → получить `testplan_id`.
-Если план не существует → предложить создать: `<tms>_create_testplan(project_id=..., title=<plan_name>)`.
+Stop here. Wait for human review.
 
-Получить текущий состав плана (TCs в нём).
+### Phase 2: Apply (commit + clear)
 
----
+Re-fetch all TCs with non-empty marker for this plan. Show the
+final list one more time:
 
-## Step 2 — Preview mode: вычислить diff
-
-Получить все TC по критериям плана из Constants (status IN {ACTIVE, DRAFT}, type соответствует плану).
-
-Вычислить:
-- **ADD**: TC соответствует критериям плана, но не в плане → `<tms>_update_testcase(id=<id>, custom_fields={"cf__planmove": "Add"})`
-- **REMOVE**: TC в плане, но не соответствует критериям (status не ACTIVE/DRAFT, или другой folder/priority/type) → `<tms>_update_testcase(id=<id>, custom_fields={"cf__planmove": "Remove"})`
-- **No change**: в плане и соответствует → ничего не делать
-
-Вывести сводку в чат:
 ```
-Plan: <plan_name>
-+ Добавить (N): TC-312, TC-315, TC-318
-− Убрать (M): TC-89, TC-102
-= Без изменений: K TC
+Applying to plan <name>:
++ Adding: list
+− Removing: list
 
-Проверь cf__planmove в <tms> UI. Когда готова — запусти /tc-plan apply <plan_name>
+Confirm? (yes/no)
 ```
 
----
+Wait for explicit confirmation. Then for each item:
 
-## Step 3 — Apply mode: применить staging
+1. Make the membership change (add or remove).
+2. **Clear the marker field** on that TC.
 
-Загрузить все TC с непустым cf__planmove для данного плана.
+Report the result with counts and any per-item failures shown raw.
 
-Показать финальный список:
-```
-Применяю к плану <plan_name>:
-+ Добавить: [список]
-− Убрать: [список]
-Продолжить? (да/нет)
-```
+The marker-clearing step is non-negotiable: a leftover marker means the
+plan is in a half-applied state, which is worse than either fully
+applied or fully not.
 
-После "да":
-- Для каждого ADD: добавить TC в план. Проверить доступные MCP-инструменты: `<tms>_add_testcases_to_run` добавляет в run, не в plan напрямую. Если есть `<tms>_add_testcases_to_plan` — использовать его. Иначе — уточнить у пользователя как в их <tms>-инстансе добавляются TCs в план.
-- Для каждого REMOVE: убрать TC из плана аналогично
-- Очистить cf__planmove: `<tms>_update_testcase(id=<id>, custom_fields={"cf__planmove": null})`
+## Hard rules
 
-Вывести итог: "Обновлено: +N / -M. cf__planmove очищен."
+- **One plan at a time.** Never batch across multiple plans. One plan's
+  criteria can mask another's; errors compound and become hard to
+  attribute.
+- **Apply requires a preview.** Preview is the staging gate; skipping
+  it removes the human-review checkpoint that the whole pattern exists
+  to provide.
+- **Confirmation before apply.** Even after preview, show the resolved
+  final list and wait for explicit "yes." The interval between preview
+  and apply is exactly when someone notices a wrong-looking change.
+- **Marker is plan-scoped.** Each plan needs its own marker (or each
+  marker carries a plan reference). Two plans sharing one marker field
+  collide on TCs that belong to both reconciliations.
+- **Never modify TC content during plan ops.** A plan reconciliation
+  changes membership and the marker field. Nothing else. Steps,
+  priorities, statuses are out of scope.
+
+## When the plan must exist before reconciliation
+
+A first reconciliation against a plan that doesn't exist yet should
+**create the plan empty** and then run the normal flow. The same diff
+will be all-ADD, no-REMOVE — which is the correct first-fill behavior.
+Don't conflate "create a plan" with "populate it"; the discipline is
+the same diff-stage-apply path.
+
+## When the criteria themselves change
+
+If you decide a plan's criteria are wrong (e.g., Smoke should now
+include MEDIUM priority too), that's a **separate decision**, made
+explicitly:
+
+1. Update the recorded criteria for the plan (in your team's source of
+   truth — the playbook, a doc, a config).
+2. Run a fresh preview against the new criteria.
+3. The preview will surface a large diff. Treat it as you would any
+   large diff — don't apply blind.
+
+Don't quietly broaden criteria during a routine reconciliation. The
+preview/apply protocol protects you from accidental composition
+changes; it doesn't protect you from accidental criteria changes.
+
+## Anti-patterns
+
+- ❌ Hand-curated plan with no recorded criteria — drift becomes
+  invisible.
+- ❌ Apply without preview ("I know what I'm doing").
+- ❌ Batching across plans in one operation.
+- ❌ Forgetting to clear the marker after apply — plan stuck in
+  half-applied state.
+- ❌ Drop-and-rebuild instead of diff (loses history, breaks linked
+  runs).
+- ❌ Sneaking criteria changes into a routine reconciliation.
+- ❌ Treating the preview output as the final action and skipping the
+  apply confirmation.
+
+## Why this is worth the ceremony
+
+A test plan is a coordination artifact between the people who write
+TCs, the people who run them, and the systems that automate them. The
+two-phase pattern adds friction to a class of changes that benefits
+from friction:
+
+- The marker creates an in-TMS audit trail that survives the agent
+  session.
+- The preview/apply split puts a deliberate human checkpoint between
+  intent and effect.
+- Single-plan scoping keeps mistakes blast-radius small.
+
+For a small plan you might never need this. For any plan that
+release/automation/regression flows depend on, the ceremony pays back
+the first time it catches a wrong reconciliation before it ships.

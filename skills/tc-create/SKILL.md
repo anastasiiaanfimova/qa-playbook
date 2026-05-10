@@ -1,204 +1,162 @@
 ---
 name: tc-create
 description: >-
-  Create test cases for <product> in <tms>. Handles naming conventions,
-  priority assignment, step format, and <tms> MCP creation. Supports bulk
-  mode: creating multiple TCs at once with duplicate checking.
-  Trigger: "create a test case", "write a TC", "add a test case",
-  "добавь кейс", "создай тест-кейс", "напиши кейс".
+  Methodology for writing test cases that survive review. Covers when to write
+  a TC, where its data should come from, how to title and prioritize it, what
+  status to assign, and how to format steps. Tool-agnostic — apply with any
+  TMS, any tracker, any analytics stack.
 ---
 
 # tc-create
 
-## Constants
+Writing a test case is two decisions: **what to capture** and **how confident
+am I that what I captured is correct**. Tooling matters far less than
+getting these two right.
 
-- `<tms>_WEB` = `1`
-- `<tms>_BACK` = `2`
-- `<tms>_ADMIN` = `3`
+## When to write a TC
 
-Folders + enum values → `references/<tms>-api.md`.
+You're looking at a behaviour worth capturing if at least one is true:
 
-Все данные — из реального источника (<analytics>, code, <metrics>, <error-monitoring>). Шаги/значения не выдумывать.
+- It corresponds to a real product event seen in analytics (it actually
+  happens).
+- It corresponds to a code path you can point at (it's actually
+  implemented, not theoretical).
+- It corresponds to a real failure observed in monitoring (it has
+  actually broken before).
+- It's on a critical user path (auth, payment, data integrity, anything
+  whose silent failure would matter).
 
-**Два режима:**
-- **BACKLOG mode** (основной): скилл читает BACKLOG-скелеты из <tms>, пользователь выбирает N для исследования → апгрейд существующего скелета
-- **Direct mode** (fallback): пользователь описывает гэп текстом → создать TC с нуля (старый путь)
+If none of these — you're writing speculation. Stop or downgrade to a note.
 
-Modes:
-- **Single** — interactive, default
-- **Bulk** — list of TCs с duplicate check
+## Where the data comes from — never fabricate
 
----
+Every value in a test case must trace to a real source:
 
-## Step 0 — Load BACKLOG queue
+| What | Source |
+|---|---|
+| Event name, property values | Product analytics |
+| Endpoint, status code, payload shape | Code or API spec |
+| Error message text | Error-monitoring tool, real captured event |
+| UI button label | Screenshot, design file, or running app |
+| User states, role flags | Database schema or code |
 
-Если пользователь не передал конкретный список гэпов текстом — загрузить BACKLOG из <tms>:
+If you don't know the exact value, write a placeholder (`<button-label>`,
+`<error-text>`) and flag it for verification — never guess. A TC with an
+invented label fails or passes for the wrong reason and erodes trust in
+the whole suite.
 
-```
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_WEB, status="BACKLOG")
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_BACK, status="BACKLOG")
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_ADMIN, status="BACKLOG")
-```
+## Status — three confidence levels
 
-Вывести список в чат, сгруппированный по priority:
+A test case carries a confidence claim. Be honest about it:
 
-```
-🔴 HIGH (priority=1):
-  [TC-id] Web / Auth: exchange_token: valid one-time token → session
-  [TC-id] Back / Billing: Payblis webhook: missing signature → 401
+- **GUESS** — source is verified (the event/code/error exists), but the
+  steps are not yet walked through. Default for output of bulk gap
+  analysis or first-pass writing.
+- **DRAFT** — partially verified, work-in-progress. You've executed at
+  least once but something is incomplete (steps, expected results,
+  edge cases).
+- **ACTIVE** — every step has been walked through against the real
+  product and matches reality. Promotes only on explicit decision.
 
-🟠 MEDIUM (priority=2):
-  ...
+When in doubt, drop down a level. `GUESS` over `DRAFT`. Better to
+under-promise than to mislead a future reviewer who trusts the status.
 
-🟡 LOW (priority=3):
-  ...
+## Hard rule: don't quietly modify ACTIVE TCs
 
-Итого в BACKLOG: N TC. Какие создаём? Укажи ID или порядковые номера.
-```
+ACTIVE means someone trusted it. Modifying silently breaks that trust.
+The flow is always: stop, show planned diff, wait for explicit
+confirmation. Same applies to bulk operations — the rule scales.
 
-Если пользователь передал конкретный список текстом — пропустить Step 0, использовать Direct mode.
+## Title patterns
 
----
+Three shapes cover almost every TC:
 
-## Hard Rules
-
-- **ACTIVE TC** — explicit confirmation перед любым изменением. Stop, show, wait. Только после явного "да".
-- **DRAFT TC** — обновляется после согласия в duplicate discussion.
-- Status: ACTIVE / DRAFT / GUESS. Gap-report TC (source confirmed, steps не верифицированы) → **GUESS**.
-
-**UI context для написания шагов:** перед TC для конкретной страницы — `find <product-dir>/ui-snapshots/output -name "*<slug>*.md"`. Карточка покажет точные названия кнопок, инпутов, заголовков → копируй в шаги вместо угадывания. Подробнее → `<product-dir>/CLAUDE.md` секция "UI Snapshots Catalog".
-
----
-
-## Bulk Mode
-
-### Step 1 — Fetch existing
-```
-mcp__<tms>__<tms>_list_testcases(project_id=<<tms>_*>)
-```
-
-### Step 2 — Duplicate check per TC
-
-- Split titles на слова (lowercase, без пунктуации)
-- Дубль если ≥2 значимых слов overlap (ignore: "не", "и", "в", "на", "→", ":", "=")
-- Только same project
-
-**Нет дубля:** silently в batch.
-
-**Есть дубль:** pause + discuss. Если existing ACTIVE — confirmation gate:
-```
-⚠️ Возможный дубликат:
-  Новый: "<title>"
-  Существующий: "<title>" [ACTIVE ⚠️ требует подтверждения]
-
-Создать новый / пропустить / обновить?
-```
-
-ACTIVE + "обновить" → ещё раз: "Что именно меняем?". Только после явного yes.
-
-Wait per TC.
-
-### Step 3 — Show plan, wait
-
-```
-Создаю N TC:
-  ✅ [Project] "<title>" — папка, приоритет, статус
-  ⏭ "<title>" — пропущен (дубликат)
-
-Подтверждаешь?
-```
-
-### Step 4 — Create batch
-
-`mcp__<tms>__<tms>_create_testcase` per TC. Папки — `mcp__<tms>__<tms>_create_folder` если нет, потом обновить `references/<tms>-api.md` с новым ID.
-
----
-
-## Single Mode
-
-**Step 1 — Clarify:**
-- Project: <tms>_WEB / <tms>_BACK / <tms>_ADMIN
-- Folder (см. references/<tms>-api.md)
-- Source: <analytics> (`mcp__Amplitude__search`) / Code / <metrics> / <error-monitoring>
-
-**Step 2 — Title pattern:**
-
-| Type | Pattern | Example |
+| Shape | Use for | Example |
 |---|---|---|
-| <analytics> event + property | `EventName: prop=val` | `Task Created: type=videogen` |
-| Negative/edge | `condition → consequence` | `credits=0 → Task Created не срабатывает` |
-| UI/backend logic | `Object: short description` | `Promote Trusted: требует подтверждения` |
+| `EventName: prop=val` | Analytics-driven cases | `Task Created: type=video` |
+| `condition → consequence` | Negative / edge cases | `credits=0 → Task Created not fired` |
+| `Object: short description` | UI / backend behavior | `Promote action: requires confirmation` |
 
-Rules:
-- Не повторять folder в title
-- Без флаффа: "Успешная", "Корректная", "happy path"
-- <analytics> data — английский, `prop=value` notation
-- Описательная часть — русский
+Title rules:
 
-**Step 3 — Priority:**
+- Don't repeat the folder/category name in the title — folder context is
+  already there.
+- No fluff: drop "successful", "correct", "happy path", "valid". The
+  status field already says whether it's positive or negative.
+- Analytics names stay in the original language they're emitted in
+  (usually English with `prop=value` notation). Description text in your
+  team's working language.
+- Title fits one line. If it doesn't, you're describing two cases.
 
-| Priority | Volume /30d | API |
+## Priority — anchor in volume, override on criticality
+
+Use real numbers from analytics, not gut feel:
+
+| Priority | Volume / 30 days | When |
 |---|---|---|
-| HIGH | >50K или critical path | 1 |
-| MEDIUM | 5K-50K или важный edge | 2 |
-| LOW | <5K или rare | 3 |
+| HIGH | >50K events | High-traffic flow |
+| MEDIUM | 5K–50K | Mainstream but not dominant |
+| LOW | <5K | Rare, edge case |
 
-**Step 4 — Status:**
-- `GUESS` — source confirmed, steps не верифицированы. Default для gap-report.
-- `DRAFT` — partially verified, WIP.
-- `ACTIVE` — каждый шаг верифицирован. Только по явному запросу.
+Override volume when the path is critical: auth, payment, account
+deletion, data export. Low-volume but unrecoverable failure modes are
+HIGH regardless of count.
 
-В сомнении — GUESS.
-
-**Step 5 — Steps.** Format: `action → expected` per line. Action — imperative. Expected — что должно случиться. UI button names не выдумывать.
-
-**Step 6 — Create or upgrade:**
-
-**BACKLOG mode — апгрейд скелета:**
-Если TC пришёл из BACKLOG (есть ID):
-1. `mcp__<tms>__<tms>_get_testcase(id=<id>)` — прочитать скелет
-2. Из steps первой строки (GAP_META) извлечь: Source, SourceRef, GapReason — контекст для ресерча
-3. Провести deep research (код, <error-monitoring>, <analytics> — как обычно)
-4. `mcp__<tms>__<tms>_update_testcase(id=<id>, steps=<новые шаги>, status=<DRAFT или GUESS>, custom_fields={"LastReviewedAt": "<YYYY-MM-DD>"})`
-   - DRAFT если шаги проверены и уверен
-   - GUESS если есть сомнения (требует ручной верификации)
-5. Переместить в правильный folder если TC сейчас без папки: `mcp__<tms>__<tms>_add_to_folder(testcase_id=<id>, folder_id=<id>)`
-
-**Direct mode — создать с нуля** (только если нет ID из BACKLOG):
-```
-mcp__<tms>__<tms>_create_testcase(
-  project_id=<<tms>_*>,
-  title="...", folder_id=<from references>,
-  priority=<1|2|3>, status="GUESS",
-  steps="step1 → result1\nstep2 → result2",
-  custom_fields={"LastReviewedAt": "<YYYY-MM-DD>"}
-)
-```
-
----
-
-## Folders
+## Steps format
 
 ```
-mcp__<tms>__<tms>_list_folders(project_id=<<tms>_*>)
-mcp__<tms>__<tms>_create_folder(project_id=<<tms>_*>, title="...", parent_id=0)
+action → expected
 ```
 
-После создания — добавить ID в `references/<tms>-api.md`.
+- `action` is imperative. Not "user clicks", just "click X".
+- `expected` is the observable result, not a restatement of the action.
+  "Click Submit → success message appears" is fine. "Click Submit →
+  Submit button is clicked" is noise.
+- One outcome per line. If a step produces two checks, split.
+- UI labels come from real screenshots, not memory. Placeholder + flag if
+  unsure.
+- Don't number unless the order matters across the whole flow. Most TCs
+  are sequential by default.
 
----
+## Duplicate check (when working in bulk)
 
-## Update
+Before creating a new TC, check existing TCs in the same project for
+overlap. A simple algorithm works:
 
-```
-mcp__<tms>__<tms>_update_testcase(id=<tc_id>, title=..., priority=..., status=..., steps=...)
-```
+- Lowercase, strip punctuation, split into words.
+- Drop stopwords — filler conjunctions in your working language, plus
+  symbols like `→`, `:`, `=`.
+- Count significant-word overlap with each existing title.
+- ≥ 2 significant words shared = potential duplicate, surface for review.
 
-Etag — автоматически.
+Cross-project overlaps are usually intentional (Web TC mirrored as Back
+TC). Same-project duplicates need discussion: keep both, merge, skip,
+update.
 
----
+If the existing TC is `ACTIVE` — double-confirm before any modification.
 
-## Resources
+## Modes (orthogonal)
 
-- `references/<tms>-api.md` — folder IDs per project, enum values
-- <error-monitoring> MCP — `list_issues`/`list_events` для error-path TC steps
+Two axes, four combinations:
+
+|  | **Single** (one at a time) | **Bulk** (list upfront) |
+|---|---|---|
+| **Direct** (you describe the gap) | Interactive write, confirm, create | Each title gets duplicate check |
+| **Triage queue** (skeletons exist) | Pick one skeleton, research, upgrade | Process N skeletons, batch upgrade |
+
+Triage queue assumes a separate gap-analysis pass has produced skeleton
+TCs that point at *what* to test without claiming *how*. The `tc-create`
+methodology fills in the *how* — adding steps and bumping status from
+something like "skeleton" to `GUESS`/`DRAFT`.
+
+## Anti-patterns
+
+- ❌ Inventing UI labels or error text from memory
+- ❌ Writing TCs for code paths that don't exist yet ("we should test
+  X feature when we build it") — that's a planning note, not a TC
+- ❌ Promoting to `ACTIVE` to clear status without walking steps
+- ❌ Folder-name in title (`Auth: Auth via email...`)
+- ❌ Fluff adjectives that don't add information
+- ❌ Speculative volume — "probably high traffic" — when analytics is
+  available
+- ❌ Modifying ACTIVE without confirmation

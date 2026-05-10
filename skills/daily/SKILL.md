@@ -1,331 +1,278 @@
 ---
 name: daily
 description: >-
-  Write daily log for <product> QA — two-block structure (продуктовое +
-  техническое) with separate Дела/План plus shared Вопросы/сложности section.
-  Pulls from <task-tracker>, <wiki> bug candidates, <tms>, episodic memory and diary.
-  Supports backfill for yesterday. Pushes to weekly file in <your-qa-repo>
-  GitHub repo.
-  Trigger: "/daily", "напиши дейли", "дейли за сегодня", "дейли за вчера", "daily log".
+  Methodology for writing daily QA logs that serve two audiences in one
+  document — product (narrative, no jargon) and engineering (concrete, with
+  links). Covers structure, per-audience style rules, pruning rules,
+  weekly summaries, and sources. Tool-agnostic.
 ---
 
 # daily
 
-## Constants
+A daily log is the simplest tool QA has for being **visible**. The
+constraint: product readers and engineering readers want different
+shapes of the same day. Solution — two blocks with shared concerns
+(blockers, open questions) below them.
 
-- `ASANA_WORKSPACE` = `1208919739404549`
-- `ASANA_PROJECT` = `<YOUR_TASK_TRACKER_PROJECT_ID>`
-- `ASANA_USER_ID` = `1214134527687814`
-- `QA_REPO_URL` = `https://github.com/anastasiiaanfimova/<your-qa-repo>.git`
-- `QA_REPO_LOCAL` = `/tmp/<your-qa-repo>`
-- `STALE_DAYS_THRESHOLD` = `5`
-- `<tms>_PROJECT_IDS` = `[1, 2, 3]` (Web, Back, Admin)
-- `STATUS_ORDER` = `[to do, doing, testing, next release]`
+The document is structurally boring on purpose. The discipline is in
+the writing rules and pruning rules — when to keep the block tight
+vs when to expand it.
 
----
+## Goal
 
-## Цель
+Make QA work visible to both audiences from one document. Product
+reads the upper block, engineering reads the lower block, both read
+the questions. Each section can be copied independently into the
+right meeting.
 
-Сделать QA-работу видимой двум аудиториям сразу: продуктовым (которые сейчас не видят что делает QA) и техническим. Один документ — два независимых блока + общая секция вопросов.
-
----
-
-## Структура секции дня
+## Day section structure
 
 ```
-## День, MM-DD
+## Day, MM-DD
 
-### Продуктовое
+### Product
 
-**Дела**
-- [нарративная фраза в продуктовых терминах, без task IDs]
+**Done**
+- [narrative phrase in product terms, no task IDs]
 
-**План на завтра**
-- [направление работы]
+**Plan for tomorrow**
+- [direction of work]
 
-### Техническое
+### Engineering
 
-**Дела**
-- [статус] [Task name](<task-tracker>-url) — что делала → суть/вердикт
+**Done**
+- [status] [Task name](tracker-url) — what I did → outcome / verdict
 
-Также смотрела:
-- [статус] [Task name](<task-tracker>-url) — комментарий: вердикт
+Also looked at:
+- [status] [Task name](tracker-url) — comment: verdict
 
-**План на завтра**
-- [статус] [Task name](<task-tracker>-url) — действие
+**Plan for tomorrow**
+- [status] [Task name](tracker-url) — action
 
-### Вопросы / сложности
+### Questions / blockers
 
-**Затыки сегодня**
-- что было трудно → как разрулили
+**Stuck today**
+- what was hard → how it was unstuck
 
-**Открытые вопросы**
-- к кому вопрос / какая нужна помощь
+**Open questions**
+- who I need / what kind of help
 
 ---
 ```
 
-- **Layout:** block-first. Удобно копировать целый блок на нужный митинг.
-- **Status order внутри блока:** `to do → doing → testing → next release`. Один статус подряд.
-- **Дни** добавляются в конец недельного файла, разделитель `---`.
+Layout is block-first. Status order within a block follows your
+tracker columns (e.g. `to do → doing → testing → next release`).
+Days append to a weekly file with `---` separators.
 
-### Пятничная сводка
+### Friday summary
 
-Если TARGET_DATE = Пятница, в конец **продуктового** блока:
+If the day is Friday, append to the **product block**:
 
 ```
-**За неделю**
-- Bug candidates: N (M уже в <task-tracker>)
-- Закрыто задач: K
-- Прогнали testruns: L
-- Создали TCs: P
+**For the week**
+- Bug candidates: N (M already in tracker)
+- Tasks closed: K
+- Test runs executed: L
+- TCs created: P
 ```
 
-Пропускается если активность за неделю нулевая.
+Skip if the metric is zero. "Closed tasks" usually means a real
+status transition (e.g. `Testing → Next release` or `* → Done`),
+not just a `completed=true` flag — many trackers update the flag
+only on the final transition while the meaningful column move
+happens earlier.
 
-**Что считается «Закрыто задач»** (ZC-specific): section transition в течение недели, не `completed=true` flag:
-- задача была на мне в `Testing`, перешла в `Next release` (или дальше)
-- задача на мне (`assignee=me`) перешла в `Done`
+## Style — different per block
 
-`completed_at`-фильтр ловит только второй случай. Основной поток (Testing → Next release) виден только через `asana_get_task_stories`.
+### Product block
 
----
+- Narrative phrases ("we found that ...", "preparing for the fix",
+  "tightened up X")
+- No task IDs, HTTP codes, class names, file paths
+- Internal tools and skills described by what they do for the
+  process, not by their internal name. Bad: "updated the X skill".
+  Good: "we now automatically check X in product metrics."
+- MCP / infrastructure / agent internals not mentioned
 
-## Style
+### Engineering block
 
-### Продуктовый блок
-- Нарративные фразы («обнаружили что», «готовим к фиксу», «докрутили»)
-- Без task IDs, HTTP-кодов, имён классов, file paths
-- Скиллы — через что они дают процессу («теперь автоматически проверяем X в продуктовых метриках»), не «обновили скилл X»
-- MCP / Claude / infra не упоминать
+- Concrete with links and statuses
+- Action → outcome via `—` or `→`
+- Skills referenced by name ("updated `X`: added new step for Y")
+- MCP / infrastructure OK
 
-### Технический блок
-- Конкретно, с task links и статусами
-- Action → суть/вердикт через `—` или `→`
-- Скиллы — своим именем («обновила bug-dig: добавила <error-monitoring>-шаги для product layer»)
-- MCP/инфра OK
+### Common
 
-### Общее
-- От первого лица
-- «Мы»-язык для командных действий, «я» для индивидуального
-- Claude — инструмент, не автор («нашли», не «Claude нашёл»)
-- Кратко, без padding
+- First-person voice
+- "We" for team actions, "I" for individual
+- AI tools / agents are tools, not authors. "We found", not "Claude
+  found"
+- Short, no padding
 
-### Content mapping (hybrid)
+## Hybrid content mapping
 
-Скиллы — в **оба** блока, разными формулировками. MCP / Claude / infra — **только** в технический.
-
----
-
-## Pruning rules — когда не пишем
-
-| Что | Когда не пишем |
+| Content type | Where |
 |---|---|
-| `Также смотрела:` | Чужих задач с моими комментариями нет |
-| Bug candidates строка | Нет за день |
-| <tms> строка | Нет TCs/runs за день |
-| `Затыки сегодня` | Подтверждённых затыков нет |
-| `Открытые вопросы` | Подтверждённых открытых нет |
-| Секция `Вопросы / сложности` | Оба подпункта пусты |
-| Yesterday reconciliation в продуктовом | Нет значимых переносов |
-| Пятничная сводка | Не пятница, или нулевая активность |
-| План — пункт со статусом | В этом статусе нет задач на мне |
+| Skills / methodology updates | Both blocks, different phrasing |
+| MCP / agent internals / infrastructure | Engineering only |
+| Task work | Engineering with link; product narrative if relevant |
+| Bug candidates / weekly review output | Product (count) + engineering (list with links) |
 
----
+## Pruning rules — don't fill what isn't there
 
-## Источники
+The trap is writing every section every day. If a section has no
+content, skip it entirely.
 
-| Целевой блок | Источник | Запрос |
+| Section | Skip when |
+|---|---|
+| `Also looked at` | No comments on others' tasks |
+| Bug candidates line | No new ones today |
+| Test runs / TCs line | No work in TMS today |
+| `Stuck today` | No real blockers |
+| `Open questions` | No unresolved questions |
+| Whole `Questions / blockers` | Both subsections empty |
+| Yesterday reconciliation in product | No meaningful carry-overs |
+| Friday summary | Not Friday, or zero activity |
+| Plan bullet for a status | No tasks in that status assigned to me |
+
+The reader trusts a sparse log more than a padded one. Empty content
+in a "Stuck today" section produces "I had no problems today" — at
+best meaningless, at worst dishonest.
+
+## Sources
+
+| Target | Source | What |
 |---|---|---|
-| Дела свои (тех) | <task-tracker> | `assignee=me`, `modified` в TARGET_DATE |
-| Дела «Также смотрела» (тех) | episodic + <task-tracker> | task IDs из episodic, верификация через `get_task_stories` |
-| Дела (прод) | tech + diary + <wiki> + <tms> | переформулировка |
-| Bug candidates | <wiki> | Bug Candidates DB страницы создан/обновлён мной TARGET_DATE |
-| <tms> | <tms> | TCs/runs мной TARGET_DATE. Пропуск если 0 |
-| План | <task-tracker> + testing-plan.md | `assignee=me`, `completed=false`, фильтр section.name |
-| Yesterday plan vs реальность | weekfile | секция «План на завтра» из TARGET_DATE - 1 |
-| Вопросы / сложности | контекст + episodic + diary | гибрид-детект, кандидаты в чат |
-| Stale tasks (только в чате) | <task-tracker> | `assignee=me`, секция не менялась >5 дней |
-| Пятничная сводка | агрегация недели | bug candidates, closed, testruns, TCs |
-
-### <task-tracker> queries
-
-**Свои задачи где было движение в TARGET_DATE:**
-```
-asana_search_tasks(
-  workspace=ASANA_WORKSPACE,
-  projects_any=ASANA_PROJECT,
-  assignee_any=ASANA_USER_ID,
-  modified_at_after="<TARGET_DATE>T00:00:00Z",
-  modified_at_before="<TARGET_DATE>T23:59:59Z",
-  opt_fields="name,memberships.section.name,modified_at,completed"
-)
-```
-
-**Задачи в работе (для Плана) — текущее состояние:**
-```
-asana_search_tasks(
-  workspace=ASANA_WORKSPACE,
-  projects_any=ASANA_PROJECT,
-  assignee_any=ASANA_USER_ID,
-  completed=false,
-  opt_fields="name,memberships.section.name,modified_at"
-)
-```
-
-Фильтрация в коде по `memberships.section.name in {to do, doing, testing, next release}`.
-
-### <wiki> query (Bug Candidates)
-
-`<wiki>-search` по Bug Candidates DB с фильтром `created_time` или `last_edited_time` = TARGET_DATE, фильтр по автору = me. Все совпавшие страницы — счётчик + список названий + ссылки. Если в схеме есть поле «<task-tracker> link» — отмечать продвинулось ли в <task-tracker>; если нет — отметка опускается.
-
-### <tms> query
-
-`<tms>_list_testcases` с фильтром по `updated_at` = TARGET_DATE, owner = me. Аналогично `<tms>_list_testruns`. Если оба пусты — секция и упоминание в продуктовом не пишутся.
+| Done — own (engineering) | Tracker | Tasks I'm assigned to, modified today |
+| Done — "Also looked at" | Conversation memory + tracker | Task IDs from chat history, verified via task comments |
+| Done (product) | Above + diary + bug candidates + TMS | Reformulation in product language |
+| Bug candidates | Bug-candidates database | Pages I created/updated today |
+| TMS work | TMS | TCs / runs by me today; skip line if zero |
+| Plan | Tracker | My tasks where `completed=false`, filtered by section |
+| Yesterday plan vs reality | Last day's section in weekfile | Carry-overs to surface in product narrative |
+| Stuck / questions | Conversation context + memory | Hybrid detect; surface candidates in chat |
+| Stale tasks (chat only) | Tracker | My tasks where section hasn't moved in N days |
 
 ### Status display
 
-Статус в скобках = **текущий** column на момент записи дейли (не на TARGET_DATE).
-
-При `TARGET_DATE != today` в чате префикс: «Дейли за <day>, <YYYY-MM-DD>. Статусы — актуальные на сейчас.»
-
-Backfill scope: `today` (default) или `вчера`. За >1 день — с дисклеймером, без consistency warranties.
-
----
+Status in `[brackets]` reflects the **current** column when the daily
+is written, not the column on `TARGET_DATE`. When backfilling
+(yesterday or earlier), prefix the chat output with: "Daily for
+<weekday>, <date>. Statuses are current."
 
 ## Workflow
 
 ### Step 1 — Setup
 
-Парсинг даты:
-- no arg / `сегодня` → `TARGET_DATE = today`
-- `вчера` → `TARGET_DATE = today - 1`
-- `YYYY-MM-DD` → as-is (с дисклеймером если разница >1 день)
+Parse the date:
+- no arg / "today" → `TARGET_DATE = today`
+- "yesterday" → `TARGET_DATE = today - 1`
+- explicit `YYYY-MM-DD` → as is, with disclaimer if >1 day off
 
-```bash
-DOW=$(date +%u)
-MONDAY_OFFSET=$((DOW-1))
-MONDAY=$(date -v-${MONDAY_OFFSET}d +%Y-%m-%d)
-FRIDAY_OFFSET=$((5-DOW))
-FRIDAY_SHORT=$(date -v+${FRIDAY_OFFSET}d +%m-%d)
-TARGET_SHORT=$(date -j -f %Y-%m-%d "$TARGET_DATE" +%m-%d)
-WEEKFILE="daily/week-${MONDAY}_${FRIDAY_SHORT}.md"
-```
+Compute the week file: `daily/week-<MONDAY>_<FRIDAY-SHORT>.md`.
 
-Если TARGET_DATE из другой недели — пересчитать MONDAY/FRIDAY относительно TARGET_DATE.
+### Step 2 — Parallel data collection
 
-### Step 2 — Параллельный сбор данных
+Fire in parallel (single message, multiple tool calls):
 
-Запустить параллельно (один message, несколько tool calls):
+1. Tracker — my tasks modified today
+2. Tracker — my tasks `completed=false` (for the plan)
+3. Bug-candidates DB — entries by me, today
+4. TMS — TCs/runs by me, today
+5. Conversation memory search — TARGET_DATE + topics ("comment",
+   "stuck", "task ID")
+6. Diary — last 3 entries
+7. Yesterday's section in the weekfile (for plan reconciliation)
 
-1. <task-tracker>: задачи `assignee=me`, `modified` в TARGET_DATE (для Дел свои)
-2. <task-tracker>: задачи `assignee=me`, `completed=false` (для Плана)
-3. <wiki>: bug candidates by me TARGET_DATE
-4. <tms>: TCs/runs by me TARGET_DATE
-5. `mcp__episodic-memory__search` по TARGET_DATE + темам ("комментарий", "затык", "task #")
-6. `mempalace_diary_read last_n=3`
-7. Чтение TARGET_DATE - 1 секции из weekfile (вчерашний План)
+### Step 3 — Extract "Also looked at"
 
-### Step 3 — Извлечение «Также смотрела»
-
-Из episodic + diary взять упоминания task IDs которых нет в <task-tracker>-результатах Step 2.
-
-Для каждого: `asana_get_task_stories(gid)` → проверить есть ли мой комментарий с `created_at` внутри TARGET_DATE. Только подтверждённые попадают в подсекцию.
+From memory + diary, find task IDs not present in Step 2 results.
+For each, fetch task comments and verify a comment of mine is dated
+on `TARGET_DATE`. Only verified entries go into the subsection.
 
 ### Step 4 — Stale tasks scan
 
-Из <task-tracker>-плана отфильтровать задачи где section не менялся `> STALE_DAYS_THRESHOLD дней` (через `modified_at` или истории если нужно).
+From the plan results, filter tasks where the section column hasn't
+changed in `>5` days. Surface in **chat only**, not in the file.
+Pattern: "Stuck in one column: [list]". The file is a log, not an
+audit; staleness alerts are a current-state signal.
 
-Показать в чате (НЕ в файле): «Висят в одном статусе: [список с ссылками]».
+### Step 5 — Hybrid detect for Questions
 
-### Step 5 — Гибрид-детект для Вопросов
+Search memory + diary + current chat for patterns:
 
-По episodic + diary + текущему разговору искать паттерны:
-- «застряли», «не получалось», «починили», «разобрались» → кандидаты в **Затыки**
-- «ждём от», «нужно от», «не хватает» → кандидаты в **Открытые вопросы**
+- "stuck", "didn't work", "fixed", "figured out" → candidates for
+  **Stuck today**
+- "waiting for", "need from", "missing" → candidates for **Open
+  questions**
 
-Показать в чате как кандидатов, ждать confirm.
+Show candidates in chat for confirmation before adding to file.
 
-### Step 6 — testing-plan.md
+### Step 6 — Reconcile with yesterday's plan
 
-```bash
-cat $QA_REPO_LOCAL/testing-plan.md
-```
+Parse "Plan for tomorrow" from the previous day in the weekfile.
+Match against actual work today:
 
-Сопоставить с задачами Плана:
-- есть упоминание + конкретика → ок
-- есть упоминание без конкретики → флагать в чате, предлагать вариант, спросить
-- нет упоминания → берём из <task-tracker>-статуса
+- Done → already in Done section, don't double-mention
+- Carried over → write a one-liner in product ("carried X over from
+  yesterday")
+- Dropped → flag in chat for the user
 
-### Step 7 — Yesterday reconciliation
+### Step 7 — Drafts in chat
 
-Парсинг секции «План на завтра» из `TARGET_DATE - 1` в weekfile (если файл и секция существуют).
+Show in this order:
 
-Сопоставить с фактическими делами TARGET_DATE:
-- сделано → не упоминаем отдельно (уже в Делах)
-- перенесено → готовим строку для продуктового («перенесли X с прошлого дня»)
-- выпало → флагать в чате
+1. Product block (Done + Plan)
+2. Engineering block (Done + Also looked at + Plan)
+3. Stuck/questions candidates
+4. Stale tasks (informational, not in file)
+5. Plan clarification flags
 
-### Step 8 — Черновики в чате
+Wait for confirmation / edits.
 
-Префикс если `TARGET_DATE != today`:
-> «Дейли за <day>, <YYYY-MM-DD>. Статусы — актуальные на сейчас.»
+### Step 8 — Friday summary
 
-Показать последовательно:
+If `TARGET_DATE` is Friday and weekly data has any non-zero count,
+aggregate:
 
-1. Продуктовый блок (Дела + План)
-2. Технический блок (Дела + Также смотрела + План)
-3. Кандидаты Затыков и Открытых вопросов
-4. Stale tasks (информативно, не в файл)
-5. Уточнения по плану (флаги missing testing-plan info)
+- Bug candidates created this week
+- Tasks closed this week — walk task histories for section
+  transitions like `Testing → Next release` or `* → Done`. The
+  `completed_at` filter alone misses tasks completed via meaningful
+  transitions short of "Done".
+- TMS runs and TCs created this week
 
-Ждать confirmation/правок.
+Append the "For the week" block to the product block.
 
-### Step 9 — Пятничная сводка
+### Step 9 — Write to file + push
 
-Если `TARGET_DATE` = Пятница и есть данные за неделю:
+Pull the latest weekfile, append the day section (or update if
+already exists), commit with `daily: <date>`, push.
 
-Агрегация:
-- <wiki>: bug candidates за неделю (created в `[MONDAY..TARGET_DATE]`)
-- <task-tracker>: closed задачи на мне за неделю — пройти по `asana_get_task_stories` для всех моих задач, modified в неделю; искать `resource_subtype=section_changed` с переходами `Testing → Next release` (или дальше) и `* → Done`. `completed_at`-фильтр недостаточен.
-- <tms>: testruns за неделю + TCs created за неделю
-
-Добавить блок «За неделю» в конец продуктового блока.
-
-### Step 10 — Запись + push
-
-```bash
-cd /tmp && git clone $QA_REPO_URL 2>/dev/null || true
-cd $QA_REPO_LOCAL && git pull --quiet
-```
-
-- Нет файла `$WEEKFILE` → создать с заголовком `# Неделя ${MONDAY} / ${FRIDAY_SHORT}`
-- Секция дня (по TARGET_DATE) есть → обновить
-- Нет → добавить в конец, разделитель `---`
-
-```bash
-cd $QA_REPO_LOCAL
-git add $WEEKFILE
-git commit -m "daily: $TARGET_DATE"
-git push
-```
-
-Дни недели (для заголовков): Понедельник, Вторник, Среда, Четверг, Пятница, Суббота, Воскресенье.
-
----
+The weekfile lives in a separate "QA logs" repo / location — not
+mixed with code repos. Daily logs are documentation, kept versioned
+for history.
 
 ## Anti-patterns
 
-- ❌ HTTP-коды / имена классов / file paths в продуктовом блоке
-- ❌ Дублирование одной формулировки в обоих блоках
-- ❌ «Обновила скилл X» в продуктовом без объяснения что это даёт процессу
-- ❌ Заполнение секции Вопросы ради заполненности
-- ❌ План продуктовый с task IDs
-- ❌ «Claude нашёл / прочитал / обновил» — Claude инструмент
-- ❌ Запись в файл без подтверждения (auto-detect кандидаты Затыков → требуют confirm)
-- ❌ Stale tasks list в файле (только в чате)
-- ❌ MCP / Claude infra в продуктовом блоке
-- ❌ Промежуточные шаги в Делах («поиск документов», «отладка»)
-- ❌ Подсекция «Свои:» как заголовок (свои задачи идут сразу под `**Дела**`)
-- ❌ Backfill за >1 день без дисклеймера про несинхронные статусы
-- ❌ Inline статус [doing → testing] на старте — не в MVP
+- ❌ HTTP codes / class names / file paths in the product block
+- ❌ Same wording repeated in both blocks — they have different
+  audiences
+- ❌ "Updated skill X" in product block without explaining what it
+  gives the process
+- ❌ Filling the Questions section for completeness
+- ❌ Plan bullets in product block with task IDs
+- ❌ "Claude found / read / updated" — AI is a tool, not the
+  author of the day
+- ❌ Writing to file without confirmation when auto-detect surfaced
+  candidates
+- ❌ Stale-tasks list in the file (chat only)
+- ❌ MCP / agent internals in the product block
+- ❌ Intermediate steps as separate "Done" bullets ("searched docs",
+  "debugged X") — the bullet should be the outcome, not the
+  process
+- ❌ Subsection "Own:" as a header — own tasks go directly under
+  `**Done**`
+- ❌ Backfill >1 day without the "statuses are current" disclaimer
+- ❌ Reporting zero activity for a metric ("Bug candidates: 0") —
+  skip the line

@@ -1,226 +1,153 @@
 ---
 name: tc-gap
 description: >-
-  Gap analysis: compares existing <tms> TCs against available signal sources
-  per project — <analytics> events (Web), backend handlers (Back), admin
-  operations (Admin) — to find uncovered areas in <product>. Produces a
-  prioritized gap report. Trigger: "tc-gap", "gap analysis", "что не покрыто",
-  "найди пробелы", "какие кейсы пропущены".
+  Methodology for finding what your test suite doesn't cover. Cross-references
+  existing test cases against three independent signal sources — product
+  analytics, code, and admin operations — and surfaces uncovered areas as
+  prioritized skeleton TCs. Tool-agnostic.
 ---
 
 # tc-gap
 
-## Constants
+A test suite is a claim about coverage. Gap analysis verifies the claim by
+asking: for everything we know happens in the product, is there a TC?
+"Everything we know happens" comes from three independent sources, not
+gut feel.
 
-- `<tms>_WEB` = `1`
-- `<tms>_BACK` = `2`
-- `<tms>_ADMIN` = `3`
-- `AMPLITUDE_PROD` = `<YOUR_ANALYTICS_PROJECT_ID>`
-- `BACKEND_HANDLERS_PATH` = `<product-dir>/backend/backend/app/handlers`
-- `ADMIN_PAGES_PATH` = `<product-dir>/admin/src`
+## Three signal sources, one per layer
 
-Run automatically — без clarifying questions.
-
-| Project | Primary signal | Additional |
+| Layer | Primary signal | What it answers |
 |---|---|---|
-| Web (<tms>_WEB) | <analytics> events | <error-monitoring> JS errors |
-| Back (<tms>_BACK) | Backend handlers | <error-monitoring> Python errors |
-| Admin (<tms>_ADMIN) | Admin pages + operations | — |
+| **Web / client** | Product-analytics events with their property values | What users actually do |
+| **Backend** | Handler functions (HTTP routes, queue consumers) discoverable in code | What the system can do |
+| **Admin / internal** | Pages and operations in the admin app | What the team can do |
 
----
+Each source is independent — events tell you what users emit, handlers
+tell you what the server accepts, admin pages tell you what operators
+can change. A bug in any layer can hide for a long time if you only
+look at one signal source.
 
-## Step 0a — Sync repos
+Optional fourth source: **error-monitoring**. Unresolved exceptions
+without matching TCs are gaps you didn't know existed. Use this as
+enrichment, not as a primary axis — error logs reveal what's failing,
+not what's untested.
 
-`/git-refresh` (pull all 3 + `code-review-graph update`). Без свежего кода `find` по `BACKEND_HANDLERS_PATH` и `ADMIN_PAGES_PATH` пропустит новые handlers/pages.
-Если `/git-refresh` уже выполнялся в этой сессии — пропустить.
+## Output: skeletons, not full TCs
 
----
+Gap analysis produces **skeleton test cases** with metadata pointing at
+the source signal — not finished TCs ready to run. The skeleton carries:
 
-## Step 1 — Fetch all TCs (parallel)
+- `Source` — which signal type (analytics event / handler / admin page)
+- `SourceRef` — the specific event name, file path, or page name
+- `GapReason` — why we think this needs a TC (no match found / new since
+  last analysis / signal changed)
+- `DetectedAt` — date
 
-```
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_WEB)
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_BACK)
-mcp__<tms>__<tms>_list_testcases(project_id=<tms>_ADMIN)
-```
+A separate `tc-create` pass picks skeletons from the queue, does the
+research, fills in real steps, and bumps status from `BACKLOG` to
+`GUESS` or `DRAFT`. This split matters: gap analysis is a fast pattern
+match across hundreds of signals; writing real steps is slow craft.
+Don't conflate them.
 
----
+## Cross-reference algorithm
 
-## Step 2 — Signals per project
+For each signal in each source, ask "is there an existing TC whose title
+matches?". Match definitions:
 
-### Web → <analytics>
-```
-mcp__Amplitude__get_context  # → AMPLITUDE_PROD
-mcp__Amplitude__get_events(appId=AMPLITUDE_PROD)
-```
-Filter prefixes: `$`, `[<analytics>]`, `[Experiment]`, `[Guides-Surveys]`.
+- **Web (event-based):** TC title contains all significant words from
+  the event name. Case-insensitive. `Task Created` matches a TC titled
+  "Task Created: type=video"; `Task Started` does not.
+- **Backend (area-based):** TC title contains at least one keyword from
+  the handler area description. Looser by design — backend areas are
+  broad ("billing webhooks") and many TCs map to one area.
+- **Admin (page+operation):** TC title contains the page or operation
+  keyword.
 
-### Back → Handlers
-```bash
-find $BACKEND_HANDLERS_PATH -name "*.py" | sort
-```
-Per file: filename + first docstring/comment. Group: billing, generation, assets, auth, webhooks.
+Word matching is fuzzy. False positives happen ("Post Scheduled" can
+falsely match "Post Published: publishType=scheduled"). Better to err
+toward flagging the gap and let `tc-create` discard than to miss it.
+When unclear, mark as gap with an ambiguity note.
 
-**Optional <error-monitoring> enrichment:**
-```
-mcp__sentry__list_issues(query="is:unresolved", limit=20)
-```
-<error-monitoring> issues не покрытые Back TC → в gap. Priority по event count: HIGH >1000/day, MEDIUM 100-1000, LOW <100.
+## Priority heuristic for skeletons
 
-**Fallback handler map (если код недоступен):**
+Without doing real research, classify by signal weight:
 
-| Area | Handlers |
+| Priority | Signal characteristics |
 |---|---|
-| Billing — success | stripe, mollie, inwizo, tailored_pay, forumpay (crypto), paypal webhooks |
-| Billing — failure | payment error, webhook retry, duplicate webhook |
-| Billing — auto-topup | low balance trigger, get/update settings, admin trigger |
-| Generation — tasks | task create, task fail/rescue, credits refund, get processing |
-| Generation — calls | call create, execute, fail, rescue |
-| Generation — results | get task result |
-| Assets | upload, batch upload, finalize, presign, HEIC convert, preview, download, delete |
-| Asset groups | create/add/get/download |
-| Auth | Google OAuth, email signup, login, logout, verify email, reset/change password, TMA |
-| Socials — OAuth | FB/IG, Threads, Twitter, YouTube: get_oauth_url, oauth_redirect |
-| Socials — connections | delete, refresh_token, get_user_profile (×5) |
-| Socials — publish | create_publication (×5) |
-| Publications | create_batch, update_batch, publish, delete |
-| Personas | CRUD, admin get/list, generations, groups |
-| Notifications | get, dismiss, mark_read, mark_all_read |
-| Templates | CRUD, use, react, admin |
-| Photoshoot categories | CRUD, admin prompts CRUD |
-| Posts | CRUD, global feed, admin |
-| Analytics | overview, by_models/networks, calls, posts, publications, content_performance, refresh |
-| LoRA / ServiceLoRA | CRUD, file upload (multipart), list |
-| ComfyServers | CRUD, reset_health, check_health, sync_fleet |
-| Credit plans | CRUD, admin list |
-| Promocodes | CRUD, redeem, allowed_emails |
-| Tool restrictions | CRUD, admin list |
-| Users (admin) | block/unblock, change_role, delete, promote_trusted, add_credits, update, credit_transactions |
-| Users (self) | get, update_nsfw, confirm_trust, delete, sessions, credit_transactions |
-| Transactions | admin list |
-| Stats (admin) | tasks: error_analysis/performance/provider_scoreboard/refund_analytics/user_segments; credits: stats/transactions/top_users |
-| Domains | frontend_domains admin CRUD, banned_domains admin CRUD |
-| Banners | CRUD, dismiss, get (user + admin) |
-| Config | health |
+| HIGH (1) | Critical user path (auth / payment / core feature / data integrity); error-monitoring shows >1000 events/day |
+| MEDIUM (2) | Mainstream feature without coverage; error-monitoring 100-1000/day |
+| LOW (3) | Edge case; view-only; <100/day |
 
-### Admin → Pages
-```bash
-find $ADMIN_PAGES_PATH -name "*.tsx" -path "*/pages/*" | sort
-```
+The downstream `tc-create` pass will refine priority with real research.
+Skeletons just need a coarse sort order so important gaps surface first.
 
-**Fallback admin map:**
+## Deduplication before creating skeletons
 
-| Page | Operations |
-|---|---|
-| Users / UserDetail | search, view, promote trusted, grant credits, block/unblock, change role, delete |
-| Tasks / TaskDetail | view list, status, details, filter by status/userId |
-| Personas / PersonaDetail | CRUD |
-| Templates | CRUD, transfer stage→prod |
-| Loras / ServiceLoras | CRUD; Klein presets |
-| Banners | CRUD |
-| Promocodes | create, disable |
-| CreditPlans | CRUD |
-| ComfyServers | monitor, enable/disable, manage |
-| ToolRestrictions | set restrictions |
-| MollieRefunds | refunds, list, find payment |
-| Transactions | history view |
-| TaskStats | 6 tabs: Overview, Performance, Providers, Errors, Refunds, UserSegments |
-| PhotoshootCategories | CRUD categories + prompts |
-| Posts / PostDetail | view list/details |
-| ErrorAnalysis | patterns, drilldown |
-| Domains | manage frontend domains |
-| Feed | view content |
-| AssetUpload | upload assets |
+Before writing a skeleton, check the project for existing TCs in any
+"unfinished" status (`BACKLOG`, `GUESS`, `DRAFT`) whose title overlaps
+≥2 significant words with the proposed title. If found, skip — don't
+duplicate. This keeps the queue clean across repeat runs.
 
----
+## STALE marking — coverage drift in the other direction
 
-## Step 3 — Cross-reference
+Existing TCs can lose their signal:
 
-**Web:** для каждого <analytics> event → есть ли Web TC где title содержит все слова event'а (case-insensitive). ✅/❌.
+- Handler renamed or removed → backend TC points at nothing
+- Analytics event dropped from taxonomy → web TC has no source
+- Admin page removed → admin TC points at nothing
+- Error-monitoring issue resolved and gone → TC for that error is no
+  longer about a real failure
 
-**Back:** для каждой area → есть ли Back TC где title содержит keyword из area description. Match: ≥1 keyword.
+Mark these `STALE` rather than deleting. They carry history, and the
+underlying behavior may resurface. Append the new reason to `GapReason`
+so the trail is preserved.
 
-**Admin:** для каждой page+op → есть ли Admin TC где title содержит page/operation keyword.
+If a TC is *already* `STALE` and the same signal-loss recurs, just
+update the reason note. Don't create a second STALE marker.
 
----
+## When to run
 
-## Step 4a — Write BACKLOG to <tms>
+Once a week is a useful default — frequent enough to catch new
+features, rare enough that handler maps stabilize between runs. Run
+after a code refresh (so the handler map reflects what's actually
+deployed) and against current analytics taxonomy (not yesterday's
+cached event list).
 
-Для каждого нового гэпа (не найдено TC в Step 3):
+## Fallback when a signal source is unavailable
 
-**Дедупликация перед созданием:** проверить существующие TC проекта. Если есть TC с `status IN (BACKLOG, GUESS, DRAFT)`, чей title совпадает по ≥2 ключевым словам с suggested title — пропустить, не создавать дубликат.
+- **Analytics down** → skip web cross-reference; check critical paths
+  (payment / auth / core features) by hand.
+- **Code unavailable / not synced** → use a hand-maintained handler
+  map for the backend axis. Looser matching, but better than skipping.
+- **TMS write disabled** → produce the report in chat only. Don't lose
+  the analysis just because creation is blocked.
 
-Создать скелет:
-```
-mcp__<tms>__<tms>_create_testcase(
-  project_id=<проект>,
-  title=<suggested TC title из Step 3>,
-  status="BACKLOG",
-  priority=<1/2/3 по эвристике>,
-  folder_id=<ближайший подходящий folder>,
-  steps="GAP_META: source=<Source> | ref=<SourceRef> | reason=<GapReason> | detected=<YYYY-MM-DD> → (skeleton, awaiting tc-create)"
-)
-```
-
-**Эвристика приоритета:**
-- HIGH (1): payment / auth / generation critical path; <error-monitoring> >1000 events/day
-- MEDIUM (2): важная фича без покрытия; <error-monitoring> 100–1000 events/day
-- LOW (3): edge case; view-only; <100 events/day
-
----
-
-## Step 4b — Mark STALE in <tms>
-
-Для каждого существующего TC, у которого изменился или исчез сигнал:
-- Handler переименован / удалён
-- <analytics> event удалён из таксономии
-- Admin-страница удалена
-- <error-monitoring> issue: ошибка пропала после деплоя и TC стал неактуальным
-
-Если TC уже STALE — обновить только GapReason (дописать новую причину), не создавать повторно.
+## Output format
 
 ```
-mcp__<tms>__<tms>_update_testcase(
-  id=<TC id>,
-  status="STALE",
-  custom_fields={
-    "GapReason": "<старый reason если был> + [<дата>] <новая причина>",
-    "DetectedAt": "<YYYY-MM-DD>"
-  }
-)
+## TC Gap — <date>
+TMS: N total (Web: X | Back: Y | Admin: Z)
+
+### New BACKLOG skeletons created: N
+[list: TC title | project | priority | source]
+
+### Marked STALE: N
+[list: TC id + title | reason]
+
+### Coverage unchanged: N areas
 ```
 
----
+Keep this in chat — it's a snapshot, not a document. The skeletons
+themselves persist in the TMS as the durable artifact.
 
-## Step 5 — Summary (chat only)
+## Anti-patterns
 
-Вывести в чат итоговый отчёт. <wiki> больше не обновляется.
-
-Формат:
-```
-## TC Gap — <product> [дата]
-<tms>: N total (Web: X | Back: Y | Admin: Z)
-
-### Новые BACKLOG-скелеты создано: N
-[список: TC title | project | priority | source]
-
-### Помечено STALE: N
-[список: TC id + title | причина]
-
-### Покрытие без изменений: N областей
-```
-
----
-
-## Fallback
-
-<analytics> недоступен → пропустить Web <analytics>. Для Web — critical path check (payment/auth/generation/nsfw).
-- Если <tms> недоступен → пропустить Step 4a/4b, вывести только чат-отчёт с пометкой "⚠️ <tms> write skipped"
-- Если TC уже в статусе BACKLOG или STALE — не создавать дубликат, только обновить GapReason
-
-## Notes
-
-- Web match — fuzzy word-bag (известное ограничение: "Post Scheduled" может ложно матчить "Post Published: publishType=scheduled")
-- При сомнении — ❌ + note ambiguity
-- Back/Admin matching looser by design (areas широкие)
-- Не спрашивать scope — все три проекта
+- ❌ Running gap analysis against stale code clones — you'll miss new
+  handlers and falsely flag renamed ones as STALE
+- ❌ Creating full TCs from gap analysis — that's `tc-create`'s job;
+  conflating produces hasty, low-quality TCs
+- ❌ Treating fuzzy false-positives as confirmed coverage — when in
+  doubt, flag the gap, don't suppress it
+- ❌ Re-running without dedup → BACKLOG fills with near-duplicates
+- ❌ Hard-deleting STALE TCs — history matters for "was this ever
+  tested?"

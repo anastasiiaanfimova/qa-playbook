@@ -1,157 +1,171 @@
 ---
 name: task-comment
 description: >-
-  Post a follow-up comment on an existing <product> <task-tracker> bug or task — fresh
-  numbers update or research-result summary. Use when re-checking an open
-  ticket after bug-dig / weekly review (Template A: fresh numbers), or when
-  closing a research/QA investigation tied to a specific task (Template B:
-  research follow-up). Trigger: "обнови задачу", "добавь свежие цифры",
-  "откомментируй задачу X", "обнови цифры", "оформи итог расследования",
-  "напиши коммент по результатам", "follow-up в задачу".
-  Always show draft first. NEVER post without explicit user confirmation.
+  Methodology for follow-up comments on existing bug tickets. Two genres
+  (fresh numbers / research follow-up), strict writing rules to avoid
+  noise, and a pre-publication self-check that catches common bad
+  patterns. Tool-agnostic.
 ---
 
 # task-comment
 
-Use `asana_create_task_story` (не create_task / update_task).
+A follow-up comment is a low-budget artifact. The reader already has
+context (the ticket); they're scanning for what's new or what's the
+answer. Long comments dilute the signal; self-narrative dilutes the
+trust; missing time-windows dilute the meaning.
 
-**HARD RULE: показать draft в чате, ждать «да/пиши/ок» перед постом.**
+This skill captures the writing discipline for follow-up comments so
+they earn their place in the thread.
 
-Скилл покрывает два жанра комментов. Выбор шаблона по входным данным:
+Hard rule: **always show a draft and wait for explicit confirmation
+before posting.**
 
-| Жанр | Когда | Шаблон |
+## Two genres
+
+| Genre | When | Template |
 |---|---|---|
-| Свежие цифры по открытому багу | bug-dig / weekly review нашёл актуальные данные | **Template A** |
-| Итог QA-расследования по конкретной задаче | задача поставила вопрос — отвечаем структурированно | **Template B** |
+| Fresh numbers | Investigation or weekly review found updated data on an open ticket | A |
+| Research follow-up | The ticket asked a question; we have a structured answer | B |
 
----
+Pick by what you have to share. Mixing them produces a confused
+comment that's neither a metric update nor an answer.
 
 ## Template A — Fresh numbers
 
 ```
 Fresh numbers (<date>)
 
-<источник>:
-  <метрика>: <prev> → <new> (<+delta>)
+<source>:
+  <metric>: <prev> → <new> (<+delta>)
 ```
 
-Источник — <error-monitoring> / <logs> / <analytics> / <metrics>. Только то, что реально менялось.
+Sources: error monitor / logs / analytics / metrics dashboard. Only
+what actually changed. If a metric didn't move, omit it — silence
+beats noise.
 
-Доп. строка только если что-то материально изменилось:
-- Новый user затронут
-- Деплой рядом с first_seen
-- Сместился root cause
-- Влетел связанный фикс
+Add one extra paragraph **only if** something materially shifted:
 
-Ничего из этого нет — блок с цифрами и есть весь комментарий.
+- A new user got affected
+- A deploy landed near `first_seen`
+- The root cause shifted
+- A related fix landed
 
----
+If none of those — the numbers block is the entire comment.
 
 ## Template B — Research follow-up
 
-Длинный итог QA/dev-расследования, отвечающий на вопрос задачи. Структура:
+A structured answer to the question the ticket posed. Shape:
 
 ```
-<strong>Коротко:</strong> [одна строка прямого ответа на вопрос задачи + главная оговорка/caveat]
+**Short answer:** [one-line direct answer to the ticket's question +
+the main caveat]
 
-[2–5 параграфов с фактами, временными рамками, конкретными числами]
+[2–5 paragraphs with facts, time windows, concrete numbers]
 
-[Замыкающая ссылка на полный технический разбор: Bug Candidate / <wiki> / drawer]
+[Closing link to the full technical write-up: candidate database,
+wiki page, drawer]
 ```
 
-Параграфы разделять `\n\n`, без `<blockquote>` (рендерится как «всё процитировано», некрасиво).
+Paragraphs separated by blank lines. Don't wrap your own paragraphs
+in blockquotes — visually it reads as if everything is quoted from
+elsewhere.
 
-**Что входит в параграфы:**
-- До/после (50/день → 0–3/день, with временными рамками)
-- Что выкатили / что уже решили — фактами без анонсов
-- Что осталось открытое + конкретное обещание следующего шага
-- Связанные задачи / латентные баги inline через `data-<task-tracker>-*` mentions
+### What goes in the paragraphs
 
-**Что НЕ входит:**
-- Пересказ того, что и так лежит в теле задачи
-- Подробные стек-трейсы, имена классов, файловые пути — это в Bug Candidate / drawer
-- Self-narrative «я расследовала / я нашла / хочу понаблюдать» — переписывать безлично
+- Before/after numbers with time windows ("50/day → 0–3/day, since
+  YYYY-MM-DD")
+- What shipped / what's already resolved — facts, not announcements
+- What remains open + a concrete promise of the next step
+- Inline references to related tickets / latent bugs
 
-**Длина:** одного экрана достаточно. Если разрослось — выноси детали в <wiki>/drawer и дай ссылку.
+### What stays out
 
----
+- Restating what's already in the ticket body
+- Detailed stack traces, class names, file paths — those go in the
+  candidate-database entry or drawer, not the comment
+- Self-narrative ("I investigated", "I found", "I want to observe")
+  — rewrite impersonally
 
-## <task-tracker>-internal links → rich mentions
+### Length
 
-Ссылки на другие <task-tracker>-задачи **обязательно** через `data-<task-tracker>-*` атрибуты — UI рендерит как имя задачи + галочка статуса (`✓` для completed):
+One screen is enough. If it grew longer, move details to the
+candidate-database entry or drawer and link from the comment.
 
-```html
-<a href="https://app.<task-tracker>.com/0/<project>/<task_gid>"
-   data-<task-tracker>-gid="<task_gid>"
-   data-<task-tracker>-accessible="true"
-   data-<task-tracker>-type="task"
-   data-<task-tracker>-dynamic="true">DEV-XXXX</a>
-```
+## Writing style — applies to both templates
 
-Текст внутри `<a>` <task-tracker> автоматически заменит на актуальное имя задачи. Голый `<a href>...DEV-XXXX</a>` — бесцветный текст-ссылка без статуса и имени.
+These rules read as a checklist because every one of them turns up
+in real drafts and degrades the comment when missed:
 
-Внешние ссылки (<wiki>, <vcs>, <error-monitoring>) — обычный `<a href>` без `data-<task-tracker>-*`.
+- **Impersonal fact > "I"-action.** "I found 10 cases" → "10 cases
+  exist". "I checked that ..." → "logs show ...". Reader doesn't
+  care who specifically found it; they care about the fact.
+- **Don't reference the ticket's own name** in a comment on that
+  ticket. "Today the additional fix DEV-1887 shipped" → "Today the
+  additional fix shipped". Tautology — the comment is already
+  attached.
+- **Concrete short promise > verbose plan.** "I'd like to observe
+  another day and confirm before closing" → "I'll re-check
+  tomorrow." One verb + one window.
+- **No filler adjectives.** "Known latent bug" → "latent bug".
+  "Known" / "new" / "small" / "fairly large" carry no information.
+- **Don't announce admin operations.** "I'll log this separately in
+  the candidate database" → delete. If it's done, it'll be visible.
+  Promised future writes that haven't happened are noise.
+- **Every number carries a time window.** "14 days", "since
+  YYYY-MM-DD", `first_seen — last_seen`, "last seen DATE". A bare
+  number is incomplete.
+- **"We"-language for code and team decisions, neutrally.** "Naive
+  fix" → "fix that addresses one bug without considering the other".
+- **Short direct sentences without padding.** "When testing, I ran
+  into the situation that the filter returns 0 templates" → "the
+  filter returns 0 templates".
+- **Facts inline.** Numbers, dates, versions, paths in prose where
+  they fit. `alembic_version=9f0e1d2c3b4a`, `192.168.14.3`,
+  `template.gender` — inside the sentence, not in a separate aside.
+- **Cause-effect with explicit connectors.** "Column missing. API
+  returns null. Frontend filters empty." → "Column missing — and
+  because of that, API returns null and frontend filters empty."
+  One sentence binds the chain.
 
----
+## Pre-publication self-check
 
-## HTML format
+Before showing the draft to the user, run this checklist on the
+text. If a row matches, fix it silently in the draft — don't
+describe what you found, just publish a cleaner version.
 
-**Supported:** `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href>`, `<hr />`. Wrap всё в `<body>...</body>`.
+| # | Check | If found |
+|---|---|---|
+| 1 | "I"-form: "I found", "I checked", "I want to observe" | Rewrite impersonally: "exists", "logs show", "I'll re-check" |
+| 2 | Mention of the ticket's own ID | Remove; the comment is already attached |
+| 3 | Verbose promise ("I'd like to observe and confirm before closing") | Replace: one verb + concrete time window |
+| 4 | Filler adjectives ("known", "new", "small", "important") | Remove entirely |
+| 5 | Self-announcing admin operations ("I'll log separately", "I'll check later") | Remove; if done, will be visible |
+| 6 | Bare ticket-link without rich-mention markup (where the tracker supports rich mentions) | Use the rich-mention form so reader sees status + name |
 
-**Параграфы**: `\n\n` между. **НЕ** оборачивать в `<blockquote>` (UI рендерит как сплошную цитату — выглядит будто весь коммент это чужая цитата).
+Six clean → show the draft. Otherwise fix first.
 
-**NOT supported**: `<p>`, `<br>`, `<br/>`, `<h1-3>`, `<hr>` (без слеша), `<pre>`.
+## Things never to write
 
----
-
-## Writing style — общие правила (применяются к обоим templates)
-
-- **Безличный факт > я-действие**. «Нашла 10 кейсов» → «есть 10 кейсов»; «проверила, что …» → «по логам …». Кто конкретно нашёл — нерелевантно, важен факт.
-- **Не упоминать имя самой задачи** в комментарии этой задачи. «Сегодня выкатился доп.фикс DEV-1887» → «Сегодня выкатился доп.фикс». Тавтология — коммент уже привязан к задаче.
-- **Короткое конкретное обещание > многословность**. «Хочу понаблюдать ещё сутки и подтвердить картину до закрытия задачи» → «Перепроверю завтра, что с ними стало». Один глагол + конкретное окно.
-- **Без эпитетов-наполнителей**. «Известный latent-баг» → «latent-баг». «Известный»/«новый»/«небольшой» — без информационной нагрузки.
-- **Не анонсировать собственные админ-операции**. «Зафиксирую отдельно в Bug Candidates» → удалить. Делается — увидится по факту.
-- **Цифры с временным окном**. Любое число несёт период (`за 14 дней`, `с 26 апреля`, `last seen DATE`).
-- **«Мы»-язык про код/решения команды** — нейтрально, не оценочно. «Наивный фикс» → «фикс одного бага без учёта другого».
-
----
-
-## Never write
-
-- «Фикса ещё нет» — задача открыта, и так понятно
-- «Verdict unchanged» — не нужно говорить о неизменном
-- Recommendation — план фиксов уже в задаче
-- Пересказ того что в задаче
-- Эпитеты-наполнители («известный», «новый», «небольшой») без информационной нагрузки
-- Анонсы своих админ-операций («зафиксирую отдельно», «потом ещё проверю»)
-- Имя самой задачи (`DEV-XXXX`) в комменте этой же задачи
-- Я-форма («нашла», «проверила», «хочу понаблюдать») — переписывать безлично
-- Голый `<a href="">DEV-XXXX</a>` для <task-tracker>-internal ссылок — использовать `data-<task-tracker>-*` rich mention
-- `<blockquote>` для оборачивания собственных параграфов — рендерится как «всё процитировано»
-
----
-
-## Self-check перед показом draft
-
-Перед тем как показать draft пользователю — прогнать по чек-листу. Нашла нарушение → исправить в черновике, не описывать вслух.
-
-| # | Проверка | Если нашла |
-|---|----------|------------|
-| 1 | Я-форма: «нашла», «проверила», «хочу понаблюдать», «расследовала» | → переписать безлично: «есть», «по логам», «перепроверю» |
-| 2 | Упоминание имени самой задачи (DEV-XXXX) | → удалить; коммент уже привязан к задаче |
-| 3 | Многословное обещание («хочу понаблюдать и подтвердить до закрытия») | → заменить: один глагол + конкретное временное окно |
-| 4 | Эпитеты-наполнители: «известный», «новый», «небольшой», «важный» | → убрать целиком; информации не несут |
-| 5 | Анонс своих операций: «зафиксирую отдельно», «потом ещё проверю» | → удалить; сделается — увидится по факту |
-| 6 | Голый `<a href="">DEV-XXXX</a>` для <task-tracker>-internal ссылок | → заменить на `data-<task-tracker>-*` rich mention |
-
-Если все 6 чистые — показываешь draft. Если нет — сначала правишь.
-
----
+- "Fix isn't ready yet" — the ticket is open; that's already
+  understood
+- "Verdict unchanged" — silence on an unchanged thing is the
+  correct shape
+- A new fix recommendation — the action plan is in the ticket body
+- Restating what the ticket body already says
+- Filler adjectives
+- Announcements of own future operations
+- The ticket's own ID
+- "I"-form prose
 
 ## Anti-patterns
 
-- ❌ Skip draft+confirm — постить сразу
-- ❌ Template B без блока **«Коротко:»** — длинный коммент должен открываться one-liner ответом
-- ❌ Длинный коммент со всеми техническими деталями вместо ссылки на Bug Candidate / drawer
-- ❌ Цифры без временного окна
-- ❌ `<p>`, `<br>`, `<h1-3>` — <task-tracker> 400 / мангл
+- ❌ Skip draft + confirmation — post immediately
+- ❌ Template B without an opening "Short answer:" line — long
+  comments must open with a direct one-liner
+- ❌ Long comment with all technical details inline instead of a
+  link to the candidate-database entry / drawer
+- ❌ Numbers without a time window
+- ❌ Blockquoting your own paragraphs — reads as if everything is
+  someone else's quote
+- ❌ Repeating what's already in the ticket body — wastes attention
+- ❌ Mixing the two genres in one comment — pick one shape and use it

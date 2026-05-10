@@ -1,541 +1,307 @@
 ---
 name: branch-analyze
 description: >-
-  QA-анализ фиче-ветки по задаче. Принимает <task-tracker> URL, задачу DEV-XXXX или имя
-  ветки. Находит MR в <vcs>, проверяет деплой на фиче-окружение, читает diff
-  и задачу в <task-tracker>, прогоняет автоматические <logs>/<error-monitoring>-проверки, создаёт
-  <wiki>-страницу с конкретными флоу для ручного тестирования.
-  Triggers: "/branch-analyze", "проверь ветку", "что тестировать по DEV-XXXX",
-  "чеклист для задачи", <task-tracker> URL.
+  Methodology for QA-analyzing a feature branch before testing. Walks from
+  any input (ticket URL / branch name / ID) through MR/PR location, deploy
+  state, paired-branch detection, diff reading, automated anomaly checks,
+  and outputs a focused manual-test plan with real URLs and signal queries.
+  Tool-agnostic.
 ---
 
 # branch-analyze
 
-## Constants
+Most "what should I test on this branch?" sessions either over-test
+(every page, every flow, blind smoke) or under-test (skim the diff,
+hit the happy path, hope). This skill captures the middle path: read
+the actual changes, cross-reference with known regression zones,
+verify the deploy state, run automated baseline-vs-feature comparisons,
+and produce a list of *specific* manual flows with real URLs and
+expected log queries.
 
-- `GITLAB_BACKEND` = `3`
-- `GITLAB_FRONTEND` = `5`
-- `GITLAB_ADMIN` = `6`
-- `REPO_BACKEND` = `<product-dir>/backend`
-- `REPO_FRONTEND` = `<product-dir>/frontend`
-- `REPO_ADMIN` = `<product-dir>/admin`
-- `SENTRY_BACKEND` = `<your-error-monitoring-project>`
-- `SENTRY_FRONTEND` = `<product>-frontend`
-- `SENTRY_STAGE_ENV` = `staging`
-- `LOKI_UID` = `<logs>` (datasourceUid для mcp__grafana__query_loki_logs)
-- `LOKI_BACKEND` = `backend-{back_task_id}`
-- `LOKI_WORKER_REGEX` = `worker_.*-{back_task_id}`
-- `LOKI_STAGE_BACKEND` = `backend`
-- `LOKI_STAGE_WORKER_REGEX` = `worker_.*`
-- `LOKI_STAGE_ENV` = `staging`
-- `NOTION_BRANCH_PARENT` = `34f98d8a3c9b8124ad7ded1cac7522ac`
-- `NOTION_BUG_CANDIDATES_DS` = `collection://26b9b9ff63194e88af44b30a6978600d`
-- `ENV_FEATURE_FRONT` = `https://{front_task_id}.staging.zncr.pro`
-- `ENV_FEATURE_API` = `https://{back_task_id}-api.staging.zncr.pro`
-- `ENV_FEATURE_ADMIN` = `https://adm.<product>.pro/login?env=preview-{back_task_num}`
-- `ENV_STAGE_FRONT` = `https://openmov.zncr.pro`
-- `ENV_STAGE_API` = `https://api.zncr.pro`
-- `ENV_STAGE_ADMIN` = `https://adm.<product>.pro`
-- `LOKI_ANOMALY_RATIO_HIGH` = `3.0` (feature/stage ratio выше → ⚠️ rose)
-- `LOKI_ANOMALY_RATIO_LOW` = `0.3` (feature/stage ratio ниже → ⚠️ dropped)
-- `LOKI_ANOMALY_MIN_COUNT` = `10` (минимум events на feature чтобы считать ratio — иначе single-event flukes)
+The output is a test plan that earns its space — every flow has a
+reason rooted in either the diff or known historical risks.
 
-### Variables (выводятся в Шаге 1-2)
+## Inputs you accept
 
-| Variable | Пример | Где используется |
+Any of the below — the skill derives the rest:
+
+- Ticket URL (Asana / Jira / Linear / etc.)
+- Ticket ID (`DEV-1727`)
+- Branch name (`fix/DEV-1727-...`)
+
+If only a branch name without a ticket ID extractable → stop, ask.
+
+## Stage 0 — Sync code, fetch all branches
+
+Before anything else: refresh local clones (pull main on each repo,
+update any code-graph caches if you have them). Then `git fetch
+origin` on each repo so feature branches are visible for diffs.
+
+Investigation against stale clones produces wrong diagnoses ("this
+function doesn't exist") that waste an hour.
+
+## Stage 1 — Parse the input
+
+| Format | Extract |
+|---|---|
+| Tracker URL | Fetch task → extract ticket ID from name |
+| `DEV-1727` | Use directly |
+| `fix/DEV-1727-...` | Regex `DEV-\d+` |
+
+Save: `TICKET_NUM` (uppercase canonical form), `task_id` (lowercase
+for paths), `task_num` (digits only — used in some env URLs).
+
+## Stage 2 — Find the MR/PR + paired-branch detection
+
+For each repo (typical split: backend + frontend + admin), search the
+VCS for MRs whose source branch contains `TICKET_NUM`. Pick the most
+recent if multiple.
+
+For each match, save: branch, URL, IID, state (`opened` /
+`merged` / `closed`), and which repo.
+
+If no MR found anywhere → stop, surface to user.
+
+### Paired-branch detection
+
+Branches sometimes carry a cross-repo reference: `feature/DEV-X-ref-DEV-Y`
+means this MR depends on a sibling MR in the other repo. Detect via
+regex on the source branch:
+
+| Found in | What to do |
+|---|---|
+| Frontend only, with `-ref-Y` | Paired. Frontend = X, backend = Y. Fetch the backend MR for Y. |
+| Frontend only, no `-ref-` | Standalone frontend; backend on review env runs `main` |
+| Backend only, with `-ref-Y` | Paired. Backend = X, frontend = Y. Fetch the frontend MR for Y. |
+| Backend only, no `-ref-` | Standalone backend; frontend on review env runs `main` |
+| Both repos, same ticket | Both are part of one task — use both |
+| Admin only | Admin typically has no review env; ask user about fallback |
+
+Important consequence: when paired, env URLs depend on the *correct*
+task ID per repo. The admin URL needs `back_task_num`; the frontend
+URL needs `front_task_id`. Mixing produces an admin connected to the
+wrong backend.
+
+### Fallback when VCS API is down
+
+Use local git: `git branch -r | grep DEV-<num>`, then take the most
+recent commit timestamp per match. **Never guess the active branch
+by name alone** — always by timestamp. Old branches with the same
+ticket prefix often linger after refactor renames; picking the
+abandoned one quietly skips the actual work.
+
+## Stage 3 — Deploy state determines test environment
+
+| MR state | Pipeline | Env to test |
 |---|---|---|
-| `TASK_NUM` | `DEV-1727` | <task-tracker> search, заголовки <wiki> |
-| `task_id` | `dev-1727` | парсинг ветки, до Шага 2.2 |
-| `task_num` | `1727` | парсинг ветки, до Шага 2.2 |
-| `front_task_id` / `front_task_num` | `dev-1653` / `1653` | URL фронта, diff фронт-репо |
-| `back_task_id` / `back_task_num` | `dev-1745` / `1745` | URL API/admin, <logs>, diff бэк-репо |
+| `merged` | — | Common stage |
+| `closed` | — | Ask user: skip or test on stage |
+| `opened` | `success` | Per-feature review env |
+| `opened` | `running` / `pending` | Stop; tell user which pipeline is in flight |
+| `opened` | `failed` / `canceled` | Stop; surface pipeline URL |
+| `opened` | null | Stop; pipeline never ran |
 
-**Standalone MR** (без `-ref-`): `front_* = back_* = task_*` — одна и та же задача.
+For paired branches, deploy is ready only when **both** pipelines
+succeed; deploy time = `max(front, back)`.
 
-**Paired MR** (`feature/DEV-X-ref-DEV-Y`): `front_*` и `back_*` разные.
+## Stage 4 — Read the ticket
 
-**Правило:** в Шагах 3-12 всегда подставляй `front_*` / `back_*` в URL и <logs> templates. Для standalone они автоматически равны — отдельной ветви кода не надо. `task_id`/`task_num` после Шага 2 не используются (кроме `TASK_NUM` для <task-tracker> и заголовков).
+Don't analyze code first — analyze the *intent*. Read:
 
----
+1. Task description / acceptance criteria
+2. Comments — especially developer comments explaining tradeoffs
+3. **Parent task** if one exists — often holds the broader spec,
+   design rationale, and AC missing from the child
 
-## Pre-check — CRG доступность
+Context from a parent often reframes what the diff is doing.
 
-Шаги 7-9 используют code-review-graph MCP. Проверить **до** Шага 0:
+## Stage 5 — Diff each MR
 
-```bash
-python3 -c "import json,sys; d=json.load(open('$HOME/<product>/.claude/settings.local.json')); sys.exit(0 if 'code-review-graph-backend' in d.get('enabledMcpjsonServers', []) else 1)"
+```
+git diff origin/main...origin/<branch> --name-only
 ```
 
-Если exit 1 (CRG выключен):
-1. Запустить: `bash ~/.claude/scripts/crg-enable.sh`
-2. Сообщить: «CRG включён в settings.local.json. Перезапусти Claude Code (или используй `claude-crg` в новом терминале) и вернись с тем же запросом — продолжу с Шага 0.»
-3. **Стоп.** Не пытаться продолжать без CRG — Шаги 7-9 без него не сработают, результат будет неполным.
+Zero files → skip that repo. For paired, read both diffs — frontend
+and backend changes typically complement each other; test flows
+must cover both halves.
 
-Если exit 0 (CRG включён) — продолжать с Шага 0.
+## Stage 6 — Categorize files by risk
 
----
+Group changed files by area and assign risk priority. The list below
+is illustrative — your own list comes from your codebase, but the
+priority axes generalize:
 
-## Шаг 0 — Sync репозиториев
-
-Полный sync через `/git-refresh` (pull all 3 + `code-review-graph update`).
-Дополнительно — fetch для feature-веток (нужен для diff в Шаге 5):
-
-```bash
-for r in $REPO_BACKEND $REPO_FRONTEND $REPO_ADMIN; do
-  git -C $r fetch origin
-done
-```
-
-Если `/git-refresh` уже выполнен в этой сессии — fetch достаточно.
-
----
-
-## Шаг 1 — Парс инпута
-
-| Формат | Действие |
-|---|---|
-| <task-tracker> URL | GID → `asana_get_task` → DEV-XXXX из названия |
-| `DEV-1727` | использовать |
-| `fix/DEV-1727-...` | regex `DEV-[0-9]+` |
-
-Сохранить: `TASK_NUM` (uppercase, e.g. `DEV-1727`), `task_id` (lowercase, e.g. `dev-1727`), `task_num` (только цифры, e.g. `1727`), `asana_task` если уже фетчили.
-
-Если DEV-XXXX не извлекается — стоп, спросить.
-
----
-
-## Шаг 2 — MR в <vcs> + paired branch detection
-
-### 2.1 — Найти исходный MR
-
-Для каждого репо (backend, frontend, admin):
-```
-mcp__gitlab__list_merge_requests(project_id=<GITLAB_*>, state="all", search=TASK_NUM)
-```
-
-Выбрать MR где `source_branch` содержит TASK_NUM. Если несколько — самый свежий по `created_at`.
-
-Сохранить для каждого найденного: `branch`, `mr_url`, `mr_iid`, `mr_state` (opened/merged/closed), `repo` (backend/frontend/admin).
-
-Если ни в одном репо нет MR — стоп, сообщить.
-
-**Fallback при недоступном <vcs>.** Если `list_merge_requests` тайм-аутит/возвращает ошибку — переключиться на локальные ветки:
-
-```bash
-git -C <repo> branch -r | grep "DEV-{task_num}"
-```
-
-Для каждого совпадения взять дату последнего коммита: `git -C <repo> log -1 --format=%ci origin/<branch>`. Активная ветка — самая свежая.
-
-⚠️ Несколько веток с одним TASK_NUM — типичная ситуация (старая + переименованная с `-ref-Y`). Без даты коммита легко взять заброшенную ветку и упустить paired-зависимость. **Никогда не угадывать активную ветку по имени** — только по timestamp.
-
-Без <vcs>: `mr_url`, `mr_iid`, `mr_state` неизвестны; `branch` берётся из локального match. Дальше идём в Шаг 2.2 как обычно.
-
-### 2.2 — Paired branch detection
-
-Из `source_branch` найденных MR извлечь паирность через regex `-ref-(?:DEV-)?(\d+)`:
-
-| Где найден исходный MR | Что делать |
-|---|---|
-| **только в frontend** + есть `-ref-Y` | Это парная фронт-ветка. `front_task_*` = из исходного MR (X). `back_task_*` = из ref (Y). Зафетчить парный backend MR: `list_merge_requests(GITLAB_BACKEND, search="DEV-Y")` — добавить в анализ если найден. Если не найден — backend ветки нет, на review env поднят `main` бэка в namespace `dev-Y` (per CI). |
-| **только в frontend** без `-ref-` | Standalone frontend MR. `front_* = back_* = task_*`. Backend на review env — `main` в namespace `dev-X`. |
-| **только в backend** + есть `-ref-Y` | Парная бэк-ветка. `back_task_*` = из исходного MR. `front_task_*` = из ref. Зафетчить парный frontend MR. |
-| **только в backend** без `-ref-` | Standalone backend MR. `back_* = front_* = task_*`. Frontend на review env — `main` в namespace `dev-X`. |
-| **в обоих** (frontend и backend параллельно с одним TASK_NUM) | Редкий случай — один task с MR в обоих репо. Берём оба, `front_* = back_* = task_*`. |
-| **только в admin** | Admin не имеет своего review env. См. Шаг 3 — `ENV_TYPE = stage` или спросить пользователя. |
-
-После 2.2 сохранены:
-- `front_mr` (или None)
-- `back_mr` (или None)
-- `front_task_id` / `front_task_num`
-- `back_task_id` / `back_task_num`
-
-Для **paired** случаев показать в чате: `"Paired: frontend dev-{front_task_num} ↔ backend dev-{back_task_num}"`. Это критично — ADMIN_URL и API_URL формируются из `back_*`, не из исходного task.
-
----
-
-## Шаг 3 — Деплой
-
-Состояние оценивается по основному MR (для paired — по тому, в чьём репо изначально искали, либо по обоим если состояния совпадают). Если состояния разные (например frontend opened, backend merged) — спросить пользователя.
-
-**`merged`** → тестируем на stage. Установить `ENV_TYPE = stage`:
-- `FEATURE_URL = ENV_STAGE_FRONT`, `API_URL = ENV_STAGE_API`, `ADMIN_URL = ENV_STAGE_ADMIN`
-
-**`closed`** → спросить пользователя: _"MR закрыт без влития. Тестируем на общем stage или пропускаем?"_
-- Пропустить → стоп
-- Тестировать на stage → установить `ENV_TYPE = stage`, `FEATURE_URL = ENV_STAGE_FRONT`, `API_URL = ENV_STAGE_API`, `ADMIN_URL = ENV_STAGE_ADMIN`
-
-**`opened`** → `mcp__gitlab__get_merge_request` → `head_pipeline.status`. Для paired — проверить пайплайны обоих MR (front_mr и back_mr если есть):
-
-| status | Действие |
-|---|---|
-| `success` | `deploy_time = head_pipeline.finished_at`, продолжать. Для paired: `deploy_time = max(front, back)` — деплой готов когда оба прошли |
-| `running`/`pending`/`created` | стоп, сообщить какой именно пайплайн ещё идёт |
-| `failed`/`canceled` | стоп, дать `head_pipeline.web_url` упавшего |
-| `null` | стоп, "пайплайн не запускался" |
-
-Если success: установить `ENV_TYPE = feature`, собрать URLs из констант (раздел Constants) с подстановкой переменных:
-
-- `FEATURE_URL` ← `ENV_FEATURE_FRONT` с `front_task_id`
-- `API_URL` ← `ENV_FEATURE_API` с `back_task_id`
-- `ADMIN_URL` ← `ENV_FEATURE_ADMIN` с `back_task_num`
-
-⚠️ Для **paired** случаев `front_task_id ≠ back_task_id`. Подставлять буквально — иначе админка коннектится не на тот backend.
-
----
-
-## Шаг 4 — <task-tracker> задача
-
-Если `asana_task` уже есть — переиспользовать. Иначе:
-```
-asana_search_tasks(text=TASK_NUM) → asana_get_task(gid)
-```
-
-Обязательно прочитать:
-1. Тело задачи (описание / Acceptance Criteria)
-2. Комментарии: `asana_get_task_stories(task_gid)` — читать все, особенно от разработчиков
-3. Если у задачи есть родитель (`parent` поле не null) → `asana_get_task(parent.gid)` + `asana_get_task_stories(parent.gid)` — тело и комментарии родительской задачи тоже
-
-Контекст из родителя часто содержит общее ТЗ, дизайн-решения и AC, которых нет в дочерней задаче.
-
----
-
-## Шаг 5 — Diff
-
-Для каждого MR из Шага 2 (front_mr, back_mr, и admin_mr если есть):
-
-```bash
-git -C <repo> diff origin/main...origin/<branch> --name-only
-```
-
-Ноль файлов — пропустить репо.
-
-Для paired случаев diff читается **по обоим** MR — фронтовая правка и бэковая правка часто дополняют друг друга, и тестовые флоу должны учитывать обе.
-
----
-
-## Шаг 6 — Категоризация изменений
-
-| Path | Область | Риск |
+| Area type | Priority | Why |
 |---|---|---|
-| `backend/app/handlers/billing/`, `backend/domain/billing/` | Billing | P0 |
-| `backend/app/handlers/credits/`, `backend/domain/credits/` | Credits | P0 |
-| `backend/infra/external/clients/` | External integrations | P0 |
-| `backend/infra/database/psql/tables/` | DB schema | P0 |
-| `backend/app/handlers/tasks/`, `backend/domain/tasks/` | Generation | P1 |
-| `backend/app/handlers/auth/`, `backend/domain/auth/` | Auth | P1 |
-| `backend/app/handlers/trusted/`, `backend/domain/trusted/` | Trusted | P1 |
-| `backend/infra/tools/base/tool.py` | Guardrails | P1 |
-| `backend/app/handlers/templates/`, `backend/domain/templates/` | Templates | P2 |
-| `backend/infra/external/clients/http/session/wrapper.py` | HTTP wrapper | P1 |
-| `frontend/src/` | UI | P2 |
-| `admin/` | Admin | P2 |
-| остальное | Other | P3 |
+| Money flows (billing, credits, payment integrations) | P0 | Direct revenue / data integrity |
+| External integrations (third-party clients) | P0 | Cross-system contract |
+| DB schema (migrations, table definitions) | P0 | Data shape changes are hard to reverse |
+| Auth | P1 | Security boundary |
+| Core feature handlers | P1 | High user-visible impact |
+| Templates / configurations | P2 | Behavior tweaks |
+| UI changes | P2 | Visual / layout |
+| Other | P3 | Background |
 
----
+The categorization drives the order of test flows in the plan and
+which automated checks must run before manual testing.
 
-## Шаг 7 — Глубокое чтение
+## Stage 7 — Read each changed file fully
 
-Для каждого изменённого файла: diff + Read целиком.
+Diff alone misses context. For each touched file: `git diff` then
+`Read` the whole file. Things to look for:
 
-**Backend handlers:** какие endpoints, границы транзакций (`commit/rollback`), операции с кредитами, изменения внешних вызовов (Stripe/Payblis/<analytics>/dbus), новые исключения raised/swallowed.
+- **Backend handlers:** transaction boundaries (where commit/rollback
+  fall), credit operations, external-call additions, exceptions
+  raised vs swallowed
+- **Backend domain logic:** invariant changes, idempotency
+  guarantees (lookup-before-insert patterns)
+- **DB tables:** new columns (nullable? default?), constraints
+  (UNIQUE / FK), migration reversibility
+- **External clients:** error handling — does this client swallow
+  with a warning, or raise to the caller?
+- **Frontend:** affected user flows, validation changes, analytics
+  event tracking (grep the diff for `track`/`logEvent` patterns —
+  new events flagged for verification, changed args flagged as
+  potential analytics regressions)
+- **Admin:** new mutations, changed permissions
 
-**Backend domain:** изменённый инвариант, idempotency-гарантии (`get_by_X` перед insert).
+## Stage 8 — Cross-check existing bug candidates
 
-**DB tables:** новые колонки (nullable? default?), constraints (UNIQUE/FK), обратимость миграции.
+Search the bug-candidates database for keywords from the changed
+areas. Active candidates touching the same area → flag in the test
+plan as ⚠️.
 
-**External clients:** провайдер, обработка ошибок swallow vs raise. `wrapper.py:35-44` логирует тело в ERROR перед raise — норма, не баг.
+### Always-check regression zones
 
-**Frontend:** затронутые флоу, billing/credit UI, валидация форм. **UI context (без браузера):** для затронутых страниц читай карточки из `<product-dir>/ui-snapshots/output/` — `find <product-dir>/ui-snapshots/output -name "*<slug>*.md"`. Видишь текущий UI (headings, buttons, inputs) + 4 варианта (desktop/mobile × light/dark) + state-overrides. Подробнее → `<product-dir>/CLAUDE.md` секция "UI Snapshots Catalog". **<analytics> tracking** — grep по diff: `<analytics>\.track\|trackEvent\|logEvent\|<analytics>\.logEvent`. Найденные events выписать. Новые (не было в main) → отметить «требует verification после теста». Изменены аргументы существующего event → отметить «проверить что старая аналитика не сломалась».
+Some areas have a history of regressions and deserve a smoke pass
+on every touch, regardless of the diff:
 
-**Admin:** изменённые фичи, новые мутации.
-
----
-
-## Шаг 8 — Bug Candidates cross-check
-
-```
-mcp__notion__notion-search(
-  query=<keyword>, filters={},
-  data_source_url=NOTION_BUG_CANDIDATES_DS
-)
-```
-
-Активные пересечения с изменённой областью → ⚠️ в сценарий.
-
-**Regression zones — всегда при касании:**
-
-| Область | Что |
+| Touched area | Always check |
 |---|---|
-| Credits | Race conditions, idempotency, баланс |
-| Generation | POST /assets/batch — порог 1640, 33s timeout |
-| Trusted | pending → active → suspended |
-| Templates | Aspect ratio (хроническая регрессия: DEV-1320, 1490, 1560) |
-| Guardrails | Trusted обходят, обычные нет |
-| Новый AI tool | Полный smoke: submit → poll → результат |
-| **UI changes** (`frontend/src/`) | **Responsive 375px** — обязательно. Открыть в DevTools → Device toolbar → 375×667 (iPhone SE). Проверить: текст не обрезан, кнопки кликабельны, превью-блоки скрываются если предусмотрено (`hidden sm:flex`), нижние панели не overflow. **Также** — проверить dark/light theme если затронуты цвета. |
+| Money / credits | Race conditions, idempotency, balance after concurrent ops |
+| Generation / batch processing | Load thresholds (specific to your system), timeout boundaries |
+| Trust / role transitions | State machine: pending → active → suspended |
+| Templates with parameters (aspect ratio, etc.) | Chronic regression — verify all parameter combinations |
+| New AI tool / generation pipeline | Full smoke: submit → poll → result |
+| UI changes | Mobile breakpoint (e.g. 375px) — text fitting, button reachability, panel overflow |
+| Color / theme changes | Both light and dark modes |
 
----
+The "regression zones" list grows from incident history. Every time
+a regression slips through, add the zone with a note.
 
-## Шаг 9 — Автопроверки
+## Stage 9 — Automated baseline-vs-feature anomaly checks
 
-Окно: `deploy_time` из Шага 3 как `startRfc3339`. Для merged MR — дата последнего коммита:
-```bash
-git -C <repo> log origin/<branch> -1 --format=%ci
-```
+The naive "show me errors on the feature env" produces noise — same
+errors are also on stage and main. The signal is **anomaly relative
+to baseline**, not raw count.
 
-**<logs> backend — anomaly detection** (не плоский фильтр, а сравнение с baseline):
+### Logs anomaly detection
 
-Идея: ловим **все** ERROR-события на feature, сравниваем с stage за то же окно. Если pattern на feature ≈ stage → фон, silent. Если значимо выше/ниже — ⚠️.
-
-Шаги:
-
-1. **Query feature** (`ENV_TYPE = feature`):
-   ```
-   {service_name="LOKI_BACKEND"} |= `ERROR`
-   ```
-   Окно: с `deploy_time` до `now`.
-
-2. **Query stage** за то же окно длительности (от `now - (now - deploy_time)` до `now`):
-   ```
-   {environment="LOKI_STAGE_ENV", service_name="LOKI_STAGE_BACKEND"} |= `ERROR`
-   ```
-
-3. **Группировка по pattern** на обеих сторонах. Pattern = `<METHOD> <path> -> <status>` (например `GET /api/overview -> 404`). Извлекать из лог-строки regex'ом, нормализовать ID-параметры в URL (`/users/123` → `/users/{id}`).
-
-4. **Сравнение per pattern**:
-   ```
-   ratio = count_feature / max(count_stage, 1)
-   
-   if count_feature < LOKI_ANOMALY_MIN_COUNT and count_stage < LOKI_ANOMALY_MIN_COUNT:
-       → silent (слишком мало для статистики)
-   elif pattern только в feature (count_stage == 0) and count_feature >= LOKI_ANOMALY_MIN_COUNT:
-       → ⚠️ "new on feature: {pattern} ({count_feature} events)"
-   elif ratio >= LOKI_ANOMALY_RATIO_HIGH:
-       → ⚠️ "rose: {pattern} ({count_feature} feature vs {count_stage} stage, {ratio}×)"
-   elif ratio <= LOKI_ANOMALY_RATIO_LOW:
-       → ⚠️ "dropped: {pattern} ({count_feature} feature vs {count_stage} stage)"
-   else:
-       → silent (фон)
-   ```
-
-5. **Output** в <wiki>-странице (Шаг 12):
-   - Если аномалий нет: одна строка `✅ <logs> backend: N events feature ≈ M stage, no anomalies`
-   - Если есть: таблица `pattern | feature | stage | verdict` с теми что попали в ⚠️
-   - Полный список patterns не выводить — только anomalies, иначе шум
-
-**<logs> workers** (если задета генерация — `backend/app/handlers/tasks/` или `backend/infra/tools/`):
-
-Feature:
-```
-{service_name=~"LOKI_WORKER_REGEX"} |= `ERROR`
-```
-
-Stage:
-```
-{environment="LOKI_STAGE_ENV", service_name=~"LOKI_STAGE_WORKER_REGEX"} |= `ERROR`
-```
-Топ-3 уникальных. Извлечь задеплоенные `service_name`. Отсутствующий воркер → ⚠️ в флоу.
-
-**<error-monitoring>:**
-
-Всегда фильтровать по окружению: `environment=SENTRY_STAGE_ENV` (т.е. `environment=staging`).
-
-Backend (если затронут backend):
-```
-mcp__sentry__list_issues(
-  projectSlug=SENTRY_BACKEND,
-  query="is:unresolved environment:staging firstSeen:><deploy_date>"
-)
-```
-
-Frontend (если затронут frontend):
-```
-mcp__sentry__list_issues(
-  projectSlug=SENTRY_FRONTEND,
-  query="is:unresolved environment:staging firstSeen:><deploy_date>"
-)
-```
-
-Формат фактов: `✅/⚠️/❌ <logs>: N ERROR ...`, `✅/⚠️ <error-monitoring> [SENTRY_BACKEND, env=staging]: N issues`, `✅/⚠️ <error-monitoring> [SENTRY_FRONTEND, env=staging]: N issues`.
-
----
-
-## Шаг 10 — Тестовые флоу
-
-На основе шагов 6-7 + контекста задачи (4) — конкретные пользовательские флоу.
-
-- Один флоу = один сценарий с реальными URL и ожидаемыми результатами
-- P0 → P1 → P2
-- Указывать что смотреть в <logs>/<error-monitoring> после флоу
-- Если флоу задевает <analytics> event (см. Шаг 7) — добавить шаг «<analytics> check: открыть https://app.<analytics>.com/analytics/<product> → Events → отфильтровать `event_type=<event_name>` last 1h → убедиться что событие пришло с ожидаемыми properties»
-- Не дублировать автопроверки из Шага 9
-
-**Структура:**
-```
-### Флоу N: <название>
-<предусловие если нужно>
-
-1. <действие> → <результат>
-2. <действие> → <результат>
-3. <logs>: `{service_name="LOKI_BACKEND"} |= "<keyword>"` — <что должно/не должно>
-```
-
-❌ "Открыть FEATURE_URL" не шаг — это общее предусловие.
-❌ OAuth/whitelisted redirect — выносить в `### Тестирование на stage` с причиной. **Только если** задача касается логина/auth-флоу или явно требует отдельной проверки через Google OAuth. Для остальных задач (UI-правки, не-auth фичи) этот раздел не нужен — на review env всё проверяется без OAuth.
-
----
-
-## Шаг 10.1 — UI Snapshots lookup
-
-**Триггер:** любая задача (фронт или бэк) где флоу упоминают конкретные страницы.
-
-Из флоу (Шаг 10) извлечь все пути страниц. Для каждого пути взять slug последнего сегмента (например `/tools/photo-shoot` → `photo-shoot`, `/billing` → `billing`):
-
-```bash
-find <product-dir>/ui-snapshots/output -name "*<slug>*.md" | head -10
-```
-
-Из найденных путей:
-- Категория = имя папки `NN-name` (второй сегмент после `output/`)
-- Имя страницы = имя файла без `.md` (убрать state-prefix вида `state-*.../`, взять только имя файла)
-
-Сгруппировать по категориям. Если несколько файлов одной страницы (разные state/viewport) — имя страницы указать один раз.
-
-Результат (если что-то найдено):
-```
-**UI Snapshots:** https://ui-snapshots-<product>.pages.dev/viewer
-
-**<категория-1>**
-<page-name-1>, <page-name-2>
-
-**<категория-2>**
-<page-name-3>
-```
-
-Если ни одна страница не найдена в ui-snapshots — блок опустить полностью.
-
----
-
-## Шаг 11 — Промежуточный репорт
-
-Шаблон для **standalone**:
+1. **Query feature env** for ERROR-level events since deploy time
+2. **Query stage env** over the same window length
+3. **Group both sides** by normalized pattern (e.g. `<METHOD> <path>
+   -> <status>`, with IDs in URLs replaced by `{id}`)
+4. **Compare per pattern:**
 
 ```
-## Готово к созданию страницы — DEV-XXXX
-**Env:** <FEATURE_URL>
-**Admin:** <ADMIN_URL>
-**MR:** <mr_url> (<state>, <repo>)
-**Деплой:** ✅/❌
+ratio = count_feature / max(count_stage, 1)
 
-**Автопроверки:**
-- <logs>: ...
-- <error-monitoring>: ...
-
-**Флоу:** N сценариев (P0: X, P1: Y, P2: Z)
-**Bug Candidates:** ...
-
-Создаю <wiki>-страницу...
+if both counts < MIN_COUNT:
+    silent (too small for statistics)
+elif pattern only on feature, count_feature >= MIN_COUNT:
+    ⚠️ "new on feature: {pattern} ({count} events)"
+elif ratio >= HIGH_THRESHOLD (e.g. 3.0):
+    ⚠️ "rose: {pattern} ({feature} vs {stage}, {ratio}×)"
+elif ratio <= LOW_THRESHOLD (e.g. 0.3):
+    ⚠️ "dropped: {pattern} ({feature} vs {stage})"
+else:
+    silent (background)
 ```
 
-Для **paired** строку `**MR:**` заменить блоком (далее — **PAIRED_MR_BLOCK**):
+`MIN_COUNT` ≈ 10 keeps single-event flukes from triggering. Output
+only the anomalies in the test plan; the full pattern list is noise.
 
-```
-**MR (front):** <front_mr_url> (<state>) — dev-{front_task_num}
-**MR (back):** <back_mr_url> (<state>) — dev-{back_task_num}
-**Paired:** frontend dev-{front_task_num} ↔ backend dev-{back_task_num}
-```
+### Worker / queue logs
 
----
+If generation / async tasks are touched: same comparison for
+worker-stream logs. A worker missing on the feature env is a
+deployment problem worth flagging.
 
-## Шаг 12 — <wiki> страница
+### Error monitoring
 
-```
-mcp__notion__notion-create-pages(
-  parent={type: "page_id", page_id: NOTION_BRANCH_PARENT},
-  pages=[{
-    properties: {title: "<TASK_NUM> — <название>"},
-    content: <структура ниже>
-  }]
-)
-```
+Filter to staging environment explicitly. Issues with `firstSeen >=
+deploy_time` are candidates for "new since this branch" — but
+verify they're tied to changed code, not coincidental.
 
-Перед вызовом: `<wiki>://docs/enhanced-markdown-spec`.
+## Stage 10 — Compose test flows
 
-**Структура (standalone):**
-```
-## <TASK_NUM> — <название>
+Translate the categorization (Stage 6) + deep-read findings (Stage 7)
++ ticket context (Stage 4) into specific user flows.
 
-**Env:** <FEATURE_URL>
-**Admin:** <ADMIN_URL>
-**API:** <API_URL>
-**MR:** <mr_url> (<mr_state>)
+Rules for a flow:
 
----
-```
+- One flow = one scenario with concrete URL, action, expected result
+- Order: P0 → P1 → P2
+- Inline log query for each flow ("after step 3, run query X — expect
+  no errors matching Y")
+- For analytics-tracked actions (Stage 7 grep) — add an "analytics
+  check" step
+- Don't duplicate Stage 9 automated checks — only manual things
 
-Для **paired** строку `**MR:**` заменить блоком **PAIRED_MR_BLOCK** (см. Шаг 11).
+What's not a flow:
 
-Остальная структура — общая для обоих случаев:
-```
----
+- "Open the page" (that's a precondition for many flows)
+- Generic OAuth / login (only include if auth itself is being
+  tested)
 
-### Предусловие
-Открыть: <FEATURE_URL>
-<общие предусловия>
+## Stage 11 — Output
 
-<если найдены UI Snapshots (Шаг 10.1)>
-**UI Snapshots:** https://ui-snapshots-<product>.pages.dev/viewer
+A structured document with:
 
-**<категория>**
-<page-name-1>, <page-name-2>
-</если>
+- Title with ticket ID + name
+- Environment URLs (feature env or stage)
+- MR link(s); for paired, both with cross-reference note
+- Automated check results (one line per source if clean; table for
+  anomalies)
+- Flows P0 → P1 → P2
+- Regression-zone smoke list
+- "Test on stage" section only if auth/login flows require it
+- Optional: link to UI snapshots / design baseline if the change is
+  visual
 
----
-
-### Автоматические проверки
-<результаты Шага 9>
-
----
-
-### Флоу 1: ...
-### Флоу 2: ...
-
----
-
-### Дополнительные проверки
-<regression zones и smoke не вошедшие в флоу>
-
----
-
-### Тестирование на stage
-<ВКЛЮЧАТЬ ТОЛЬКО если задача касается логина/auth-флоу или явно требует Google OAuth. Иначе раздел опустить полностью — review env покрывает всё.>
-Дождаться merge → ENV_STAGE_FRONT
-<список с причинами>
-```
-
-После создания — вывести кликабельную ссылку в чат:
-`[DEV-XXXX — <название>](https://www.<wiki>.so/<page_id_without_dashes>)`
-
----
+The output isn't a generic checklist — it's calibrated to *this*
+branch, *this* diff, *this* deploy state.
 
 ## Hard rules
 
-- ❌ Не создавать <task-tracker>-задачи
-- ❌ Не пропускать P0 области (billing, credits всегда полностью)
-- ❌ Деплой failed/идёт → дать `head_pipeline.web_url`, стоп
-- ❌ MR closed без влития → не стопить автоматически, спросить пользователя
-- ✅ Всегда: diff + полный файл (Read), автопроверки до <wiki>, флоу с реальными URL
-- ✅ MR merged → stage (`ENV_TYPE = stage`), не feature
-- ✅ MR closed + пользователь выбрал stage → `ENV_TYPE = stage`
-- ✅ MR opened + pipeline success → feature env (`ENV_TYPE = feature`)
-- ✅ <logs>: feature env — по service_name (LOKI_BACKEND); stage env — по environment+service_name (LOKI_STAGE_*)
-- ✅ <error-monitoring>: всегда `environment=staging`, указывать projectSlug явно; frontend changes → проверять SENTRY_FRONTEND
-- ✅ <logs> всегда с временным окном от деплоя
-- ✅ Bug Candidates cross-check обязателен
-- ✅ <task-tracker> задача из Шага 1 переиспользуется в Шаге 4
-- ✅ После создания <wiki>-страницы — вывести кликабельную ссылку в чат
-- ✅ UI Snapshots (Шаг 10.1): если флоу упоминают страницы — найти в ui-snapshots, добавить viewer-ссылку и имена в <wiki> под «Предусловие». Триггер — любая задача (фронт или бэк), не только frontend diff
-- ✅ Paired detection: source_branch с `-ref-DEV-Y` → fetch парного MR в противоположном репо, считать `front_task_*` ≠ `back_task_*`
-- ✅ ADMIN_URL: `adm.<product>.pro/login?env=preview-{back_task_num}` — `back_task_num` это **только цифры** (1745, не dev-1745)
-- ❌ Подставлять `task_id` (с префиксом `dev-`) в env параметр — даст `preview-dev-1745`, админка не подключится
+- ❌ Don't create tracker tickets from this skill — output is a
+  test plan, not new work
+- ❌ Don't skip P0 areas (money flows are always fully covered)
+- ❌ Don't proceed with `pipeline=failed` — surface and stop
+- ❌ Don't auto-stop on `MR=closed` — ask the user (sometimes you
+  test on stage anyway)
+- ✅ Always: diff + full file read + automated checks before manual
+  flows
+- ✅ `merged` → stage env. `opened+success` → feature env. `closed`
+  → ask
+- ✅ Use anomaly comparison, not raw error filter, for log checks
+- ✅ Bug-candidates cross-check is mandatory
+- ✅ Reuse the ticket fetched in Stage 1 — don't re-fetch
+- ✅ Paired branches → fetch the sibling MR; use the correct
+  per-repo task ID in env URLs
+
+## Anti-patterns
+
+- ❌ "Generic smoke" plan with no diff-rooted flows — the test plan
+  must explain why each flow exists
+- ❌ Reading only the diff without opening files — diffs hide
+  context (try/except shape, transaction boundaries)
+- ❌ Listing every error from feature env as a regression — anomaly
+  comparison filters baseline noise
+- ❌ Picking branch by name when multiple match `DEV-X` — always
+  use the most recent commit timestamp
+- ❌ Mixing paired front/back IDs in one URL — admin connects to
+  wrong backend
+- ❌ Test flows that re-test what automated checks already cover
+- ❌ Manual flow steps that don't include the log query to check
+  afterwards

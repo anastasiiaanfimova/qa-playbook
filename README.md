@@ -1,123 +1,112 @@
 # QA Playbook
 
-Templates, skills, and agents for QA at AI-first SaaS products — async job pipelines, LLM wrappers, billing.
+A reference collection of QA methodology — written as Claude Code skills,
+but readable as standalone documentation.
 
-Focused on the scenario where you are the **first QA on the team**, starting from scratch with no existing tests or processes.
+Focused on the scenario where you are the **first QA on a team** at an
+AI/SaaS product, building processes from scratch.
 
 ---
 
 ## What's inside
 
-### `qa-onboarding-template.md`
+### Onboarding
 
-A practical onboarding checklist for the first QA on a project without tests or processes. Covers:
+- **`qa-onboarding-template.md`** — practical onboarding checklist for the
+  first QA on a project without tests or processes. Covers access requests,
+  conversations with product/dev, the exploratory-testing window, risk
+  mapping, documentation, smoke vs regression splits, and a phased
+  automation roadmap. Each section has an AI-first block for async
+  generation flows (job submission → polling → assertion patterns,
+  LLM provider failures, queue saturation, output acceptance criteria).
 
-- **Access requests** — staging environments, Jira, TMS, Swagger, CI/CD, logs, queues, DB
-- **Conversations with product and dev** — what breaks most, what can't break, what's shipping soon
-- **Exploratory testing** — how to use the "fresh eyes" window before it closes
-- **Risk mapping** — a simple table format: area → risk → priority → automation status
-- **Documentation** — what to ask the team for, what to create first
-- **Test cases and checklists** — checklist + comment format (not step-by-step), smoke vs regression split
-- **Automation roadmap** — phased plan, CI integration, async pipeline helpers
+### Methodology skills
 
-Each section has an **AI-first block** with specifics for async generation flows:
-- `submit_job → poll_status → assert_result` pattern
-- LLM provider failures, timeouts, retry handling
-- Queue saturation, job state transitions
-- Acceptance criteria for generated output (format, size, time)
+The `skills/` directory contains **methodology** — process knowledge,
+decision frameworks, writing rules, anti-patterns. Not tool-coupled
+working code.
 
-### `resources.md`
+Each `SKILL.md` describes how to do one piece of QA work in a way that
+survives a stack change. Switch tracker, swap your TMS, change
+monitoring vendor — the methodology still applies; only the tool calls
+change.
 
-Curated list of QA tools — updated periodically:
-- LLM / AI output testing (deepeval, promptfoo, llmtest)
-- Async pipeline testing (tracetest)
-- API testing (stepci, api-automation-agent)
-- Load testing (k6)
-- Curated indexes and references
-
----
-
-## Claude Code skills
-
-Slash command skills — invokable with `/skill-name` in any Claude Code session. Each skill defines a multi-step automated workflow that Claude executes inline (with full tool access and context).
-
-**Install:** copy a skill directory to `~/.claude/skills/` — Claude Code auto-discovers them on startup:
-
-```bash
-mkdir -p ~/.claude/skills/tc-create
-cp skills/tc-create/SKILL.md ~/.claude/skills/tc-create/
-```
-
-### Toolstack
-
-Skills reference your specific toolstack via placeholders. Before use, replace them in each `SKILL.md`:
-
-| Placeholder | Meaning | Examples |
-|---|---|---|
-| `<product>` | Your product name | MyApp, Acme |
-| `<tms>` | Test management system | TestRail, Qase, Zephyr |
-| `<analytics>` | Product analytics | Amplitude, Mixpanel, PostHog |
-| `<error-monitoring>` | Error monitoring | Sentry, Rollbar, Bugsnag |
-| `<metrics>` | Metrics / dashboards | Grafana, Datadog |
-| `<logs>` | Log aggregator | Loki, Datadog Logs, Papertrail |
-| `<wiki>` | Knowledge base | Notion, Confluence |
-| `<task-tracker>` | Task / bug tracker | Asana, Jira, Linear |
-| `<vcs>` | Version control | GitLab, GitHub |
-| `<data-warehouse>` | Data warehouse | ClickHouse, BigQuery, Redshift |
-| `<backend-repo>` | Path to backend repo | `~/MyApp/backend` |
-| `<frontend-repo>` | Path to frontend repo | `~/MyApp/frontend` |
-| `<admin-repo>` | Path to admin repo | `~/MyApp/admin` |
-
-MCP tool names follow the pattern `mcp__<toolname>__<action>` — replace `<toolname>` with your actual MCP server name.
-
-### Skills
-
-| Skill | What it does |
+| Skill | What it covers |
 |---|---|
-| `tc-create` | Creates test cases in `<tms>` following naming conventions, priority rules (based on analytics event volume), and step format. Verifies all data against a real source — analytics, backend code, or monitoring. Never invents steps. Supports single and bulk mode. |
-| `tc-update` | Updates existing test cases in `<tms>`: bulk field changes (type, priority, status), folder moves, content/steps edits, renames. Handles etag flow automatically. ACTIVE TCs require explicit confirmation before any change. |
-| `tc-gap` | Gap analysis: fetches all existing TCs, collects signal sources per project (analytics events for Web, backend handlers for Back, admin panel pages for Admin), cross-references, and outputs a prioritized gap report. Auto-updates a wiki page; preserves manually added notes. |
-| `tc-plan` | Manages test plan membership in `<tms>`. Two modes: preview (marks TCs via a `cf__planmove=Add/Remove` custom field) and apply (commits the changes and clears the field). Always targets one specific plan. |
-| `bug-review` | Weekly bug triage prep: refreshes signal sources (`<error-monitoring>`, `<vcs>`, `<metrics>`, `<analytics>`, `<data-warehouse>`, `<task-tracker>`, `<wiki>` docs) and rebuilds the Bug Candidates list with dedup against prior week. Output feeds into `bug-dig`. Never auto-creates `<task-tracker>` tasks. |
-| `bug-dig` | Investigates a bug or error monitoring issue: confirms whether it's a real user-impacting bug, monitoring noise, or theoretical risk. Collects evidence across `<error-monitoring>`, `<logs>`, `<analytics>`, git log, `<wiki>`, and code. Delivers verdict in chat; never auto-creates `<task-tracker>` tasks. Call `bug-nominate` to record the verdict to the Bug Candidates DB. |
-| `bug-nominate` | Records a `bug-dig` verdict to the Bug Candidates `<wiki>` DB. Checks for an existing row by fingerprint, then updates or creates. Does not investigate — that's `bug-dig`. Does not create `<task-tracker>` tasks. Always drafts in chat and waits for confirmation before writing. |
-| `task-create` | Creates a well-formatted bug task in `<task-tracker>` after `bug-dig` confirms a real bug. Covers required sections, field values, formatting rules, and the writing style your team expects. Always shows draft for approval first; never creates the task without explicit user confirmation. |
-| `task-comment` | Posts a follow-up comment on an existing `<task-tracker>` bug or task — either a fresh-numbers update or a research-result summary. Use after `bug-dig` / weekly review (Template A: fresh numbers), or when closing a research/QA investigation tied to a specific task (Template B: research follow-up). Always shows draft first; never posts without explicit confirmation. |
-| `billing-trace` | Traces a payment by ID, transaction hash, payment address, or user email — finds the DB record, webhook logs in `<logs>`, and on-chain status. Main goal: figure out why a payment didn't confirm. Crypto-first (ForumPay) with simplified flows for Stripe and other providers. |
-| `git-refresh` | Pulls latest from main for all configured repos and rebuilds code-review-graph indexes. Run at the start of a session before code analysis or QA work. |
-| `branch-analyze` | QA analysis of a feature branch by task. Accepts a `<task-tracker>` URL, ticket key, or branch name. Finds the MR in `<vcs>`, verifies deploy to the feature environment, reads the diff and the task description, runs automated `<logs>` / `<error-monitoring>` checks, then writes a `<wiki>` page with concrete flows for manual testing. |
-| `ui-snapshots` | Maintains a Playwright-based UI screenshot catalog for `<product>` — desktop + mobile, light + dark, with per-property user-state combinations. Subcommands: `view` (open the local HTML gallery, ~2 sec), `run` (full Playwright refresh, ~20 min), `run --since <ref>` (selective refresh based on frontend git diff, ~5 min), `state <label>` (ad-hoc DB toggle outside the runner). Faceted gallery with viewport/theme toggles and per-property filters. |
-| `qa-audit` | Tooling audit: reads MemPalace diary across recent sessions, identifies recurring pain points and manual steps, suggests new skills, agents, MCP tools, automations, or workflow improvements. Focused on "what should we build next?" — not a session summary. |
-| `daily` | Writes today's daily log based on the current conversation and pushes it to your QA notes repository. Asks before writing if anything is unclear. Not QA-specific — useful for any work log. |
-| `qa-playbook-push` | Syncs local QA skills and agents to this GitHub repo. Diffs local vs repo, anonymizes private tool and product names, commits only changed files. Handles all public skills and agents. Updates README if content changed. |
+| `tc-create` | When to write a TC, where data comes from, status confidence levels, title patterns, priority criteria, duplicate-check algorithm |
+| `tc-update` | Status-driven modification protocol (ACTIVE per-item, DRAFT/GUESS bulk-ok), STALE triage with gap-context-first reading, single vs bulk discipline, error surfacing |
+| `tc-plan` | Plan-as-derived-view model with explicit criteria, two-phase preview/apply pattern via a staging marker field, drift reconciliation |
+| `tc-gap` | Three-axis coverage analysis (analytics events / backend handlers / admin pages), skeleton-output pattern, STALE marking |
+| `bug-dig` | Investigation methodology for "is this a real bug?" — root-cause-in-system principle, four-verdict model, multi-source quick-triage triangle, browser-side error path, code review checklist |
+| `bug-nominate` | Single-writer pattern for persisting bug candidates: separation of investigation from durable write, fingerprint dedup, body-protection rule, interactive vs silent batch modes |
+| `bug-review` | Multi-source signal convergence for weekly bug discovery: independent telemetry sources, two time-window discipline (delta vs trend), three-layer flow, idempotency under flexible cadence |
+| `task-create` | Bug ticket structure: two-layer body (product + engineering), section requirements per bug type, priority logic with downstream-effect awareness, writing style |
+| `task-comment` | Follow-up comment discipline: two genres (fresh numbers / research summary), strict writing rules, pre-publication self-check |
+| `branch-analyze` | Feature-branch QA analysis: paired-branch detection, env-state decision tree, anomaly detection vs baseline, regression-zone smoke list, manual-flow generation |
+| `billing-trace` | Payment trace methodology: DB lookup → webhook logs → external settlement → diagnostic tree, cross-environment routing trap |
+| `daily` | Two-block daily log: product (narrative) + engineering (concrete), pruning rules, Friday weekly summary, hybrid content mapping |
+| `qa-audit` | Tooling retrospective: time-windowed signal extraction, pain → solution mapping table, prioritized output |
 
----
+### Agents
 
-## Claude Code agents
-
-Sub-process agents dispatched for isolated subtasks. Unlike skills, agents run in a separate context with their own tool set.
-
-**Install:** copy any agent file to `~/.claude/agents/` — Claude Code auto-discovers them on startup:
-
-```bash
-cp agents/test-case-writer.md ~/.claude/agents/
-```
+Sub-process agents in `agents/` — runnable tools dispatched for isolated
+subtasks (writing test cases, designing test strategy, coverage analysis,
+E2E / API / perf testing, QA news digest, bug reports).
 
 | Agent | What it does | Model |
 |---|---|---|
-| `test-case-writer` | Writes structured test cases in checklist format — for a feature, endpoint, user flow, or bug fix. Output is suitable for Qase, TestRail, or documentation. | haiku |
-| `test-architect` | Designs a test strategy from scratch — framework selection, folder structure, test pyramid, CI integration plan. Audits the codebase before recommending. Specialized for async AI/LLM pipelines. | sonnet |
-| `coverage-analyst` | Analyzes existing test coverage — finds gaps, identifies untested critical paths, prioritizes what to cover next. Doesn't write tests, gives a gap report. | haiku |
-| `e2e-tester` | Writes E2E automated tests for web UI using Playwright — critical user flows, form interactions, auth flows, cross-browser checks. | sonnet |
-| `api-tester` | Writes automated tests for REST API or gRPC endpoints — happy paths, edge cases, error scenarios, contract validation, auth flows, PostgreSQL state verification. | sonnet |
-| `perf-tester` | Writes load and performance tests — concurrent users, job queue saturation, SLA validation. Uses k6 by default; specializes in async AI/media generation pipelines. | sonnet |
-| `qa-researcher` | Fetches QA news and tool updates — new frameworks, testing practices for AI/LLM products, async pipeline testing. Returns a focused digest. | sonnet |
-| `bug-reporter` | Turns raw notes from manual testing into a structured bug report — clear reproduction steps, severity, impact, environment details. Ready to paste into Jira, Linear, or GitHub Issues. | haiku |
+| `test-case-writer` | Writes structured test cases in checklist format suitable for any TMS or doc | haiku |
+| `test-architect` | Designs test strategy from scratch — framework selection, folder structure, test pyramid, CI integration plan; audits the codebase first | sonnet |
+| `coverage-analyst` | Gap report — finds untested critical paths, prioritizes what to cover next | haiku |
+| `e2e-tester` | E2E web tests with Playwright | sonnet |
+| `api-tester` | REST / gRPC tests — happy paths, edge cases, contract validation, auth, DB state | sonnet |
+| `perf-tester` | Load & perf tests with k6, specialized for async AI/media pipelines | sonnet |
+| `qa-researcher` | Digest of QA news and tool updates | sonnet |
+| `bug-reporter` | Turns raw test notes into a structured bug report | haiku |
+
+---
+
+## How to use
+
+These skills are written as **reference documents**. Read the
+methodology, apply to your own stack. They aren't drop-in
+configurations — your tracker / TMS / monitoring tool calls go in your
+own local working version.
+
+If you want to install one as an actual Claude Code skill in your
+environment, copy the directory into `~/.claude/skills/` and adapt
+the abstract tool references to your stack:
+
+```bash
+cp -r skills/tc-create ~/.claude/skills/
+# Then edit ~/.claude/skills/tc-create/SKILL.md to reference your real
+# TMS, MCP tool names, project IDs, etc.
+```
+
+Agent files install the same way:
+
+```bash
+cp -r agents ~/.claude/
+```
 
 ---
 
 ## Who this is for
 
-QA engineers working on AI products: LLM wrappers, generation pipelines, SaaS with billing limits. The templates assume async flows, external AI providers, and a small team where QA owns the entire testing strategy.
+QA engineers working on AI products: LLM wrappers, generation pipelines,
+SaaS with billing flows. The methodology assumes async pipelines,
+external AI providers, and a small team where QA owns the entire
+testing strategy.
 
-Pairs well with [claude-configs](https://github.com/anastasiiaanfimova/claude-configs) — the base Claude Code setup (hooks, agents, memory stack) that these skills run on top of.
+Pairs well with
+[claude-configs](https://github.com/anastasiiaanfimova/claude-configs) —
+base Claude Code setup (hooks, agents, memory stack) that these skills
+run on top of.
+
+---
+
+## Maintenance note
+
+This is a published methodology snapshot, not a drop-in toolkit. Skills
+update when their underlying methodology genuinely evolves — not on
+every local working-version change.

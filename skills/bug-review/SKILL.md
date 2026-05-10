@@ -1,193 +1,226 @@
 ---
 name: bug-review
 description: >-
-  Weekly refresh of <product> QA data sources + rebuild of Bug Candidates list.
-  Two-layer flow: refresh individual source pages in <wiki> (<vcs>, <error-monitoring>,
-  <metrics>, <analytics>, <data-warehouse>, <task-tracker>, <wiki> docs), then rebuild the "Bug
-  Candidates" <wiki> DB with smart dedup against prior week. Main output is
-  Bug Candidates — the input for bug-dig triage. Never auto-creates <task-tracker>
-  tasks. Trigger: "bug-review", "weekly-review", "обнови ревью", "собери кандидатов", "свежий bug list".
+  Methodology for surfacing likely bugs from system-wide signal convergence.
+  Reads multiple independent telemetry sources (errors, logs, analytics,
+  data warehouse, tracker, code), merges by fingerprint, ranks by weight,
+  and produces a prioritized candidate list. Tool-agnostic.
 ---
 
 # bug-review
 
-## Constants
+A bug rarely shows up in only one place. The same broken behavior
+emits an error event, drops an analytics conversion, accumulates rows
+in a failure-table query, and may have a coincident commit. Looking
+at any one source in isolation under-reports.
 
-- `NOTION_REVIEW_PARENT` = `34998d8a3c9b806da443da66e4a7542c`
-- `NOTION_QA_REVIEW` = `34898d8a3c9b81ffb128c375efe0f113`
-- `NOTION_SRC_GITLAB` = `34898d8a3c9b8170a985e4b16841e510`
-- `NOTION_SRC_ASANA` = `34898d8a3c9b81d0a060e2aa8665e537`
-- `NOTION_SRC_GRAFANA` = `34898d8a3c9b81c0adeffc4de6a2f0ec`
-- `NOTION_SRC_<data-warehouse>` = `34898d8a3c9b818c9e54f814d43bc10f`
-- `NOTION_SRC_AMPLITUDE` = `34b98d8a3c9b813da281dbd908b6195b`
-- `NOTION_SRC_NOTION_DOCS` = `34898d8a3c9b81b097efcd6b96bb1d4a`
+This skill captures the methodology of **multi-source signal
+convergence**: pull from independent telemetry, merge fingerprints,
+rank, and surface the most likely bugs without manually triaging
+every source separately.
 
-`NOTION_SRC_SENTRY` создаётся при первом refresh под `NOTION_REVIEW_PARENT` (изначально не существует).
+## Two independent time windows — never conflate
 
-Bug Candidates DB schema → `references/<wiki>-schema.md`. Главный output — **Bug Candidates DB**, всё остальное вспомогательное.
+The skill operates over two windows simultaneously, used for
+different questions:
 
----
+### Delta window — "what's new since the last run"
 
-## Sub-commands
+Window: `[last_run, today]`. Used for **discovery** of new signals:
+new error issues, new tracker tickets, new commits. Variable length;
+depends on how often the review runs.
 
-| Cmd | Что |
-|---|---|
-| `/bug-review refresh [source?]` | Layer 1. Update source pages. Без arg — все. С arg (`<vcs>`/`<error-monitoring>`/`<task-tracker>`/`<metrics>`/`<analytics>`/`<data-warehouse>`/`<wiki>-docs`) — одна. |
-| `/bug-review bugs` | Layer 2. Rebuild Bug Candidates DB. |
-| `/bug-review qa` | Regenerate QA Review синтез. |
-| `/bug-review all` | refresh → bugs → qa. |
+### Trend window — "is it getting worse?"
 
-**Cadence: гибкий.** Минимум — weekly. Daily ОК и даже полезно для активного мониторинга — при условии что Layer 2 использует ISO-week-based bumping счётчика повторов (см. `merge-algorithm.md`). Twice a day тоже безопасно: внутри одной ISO-недели runs идемпотентны для счётчика.
+Window: **always** `this_week = [today-7d, today]` versus
+`prior_week = [today-14d, today-7d]`. Fixed length; **independent of
+last_run**. Used for rate/ratio/volume comparisons:
 
----
+- Failure rate per area in the data warehouse
+- Error class rate or ratio in logs
+- Analytics event volumes / funnel conversion deltas
+- Error-monitor frequency (events / users) week-over-week
 
-## Два разных временных окна
+If `last_run = today - 2 days`, you still compare last 7 days to the
+previous 7 — otherwise deltas compress and look like "everything
+improved" when really the window shrunk.
 
-Скилл работает с **двумя независимыми окнами** — не путать:
+**Ratio formula doesn't depend on window length, only on equal
+windows on both sides of the comparison.**
 
-### Delta window — "что нового с прошлого прогона"
+## Three-layer flow
 
-Окно: `[last_run, today]`. Используется для discovery новых сигналов: новые <error-monitoring> issues, новые <task-tracker> BUG-задачи, новые коммиты. Гибкое — зависит от каденса прогонов.
+Three layers, each independently re-runnable:
 
-### Trend window — "стало хуже / лучше WoW"
+| Layer | Purpose | Output |
+|---|---|---|
+| **Refresh** | Pull deltas from each source, update per-source state, emit signals | List of `{fingerprint, title, source, severity_hint, signal_refs}` |
+| **Bugs** | Merge signals into the candidates database via the single-writer skill (see `bug-nominate`) | Updated candidates table |
+| **Synthesis** | Regenerate the human-readable summary view | Top-N candidates by score |
 
-Окно: всегда `this_week = [today-7d, today]` vs `prior_week = [today-14d, today-7d]`. Фиксированное, **не зависит от `last_run`**. Используется для:
-- <data-warehouse> failure rate per (tool, reason)
-- <logs> error-class rate / ratio
-- <analytics> error event volumes / funnel conversions
-- <error-monitoring> issue frequency (events / users) сравнения
+Layers can be invoked separately. Refresh-only after a partial
+outage. Bugs-only after re-importing manually-collected signals. All
+three for a regular cadence run.
 
-Если `last_run = today - 2 дня`, мы всё равно сравниваем последние 7 дней с предыдущими 7 — иначе deltas сжимаются и выглядят как "всё улучшилось" просто потому что окно стало короче.
+## Sources — what each is good for
 
-**Ratio формула не зависит от длины окна — только от равенства окон между собой.**
+The methodology assumes you have access to several independent
+telemetry sources. Each contributes signals of a specific shape:
 
----
+| Source | Produces candidates? | Signal shape |
+|---|---|---|
+| Error monitor | Yes | New issues, frequency spikes, regression of resolved issues |
+| Logs | Yes | Error-class rate spikes, new patterns |
+| Analytics | Yes | Error events, funnel conversion drops, missing/dropped events |
+| Data warehouse | Yes | Failure rate per business dimension (provider × tool × etc.) |
+| Tracker | Yes | New bug tickets, status changes |
+| VCS | Yes | Reverts, hot-file commits, critical-path touches |
+| Wiki / docs | No (context only) | Updated specs, postmortems, internal investigations |
 
-## Sources
+Manual sources (user reports in chat, social media mentions, support
+channels) are intentionally **not** automated — they need human
+judgement before becoming candidates.
 
-Automated: <error-monitoring>, <vcs> (3 repos), <task-tracker>, <metrics>/<logs>, <analytics>, <data-warehouse>, <wiki> docs.
-Manual (НЕ в скилле): Trustpilot, Telegram dev chat.
+## Cross-source merging — the same bug from different angles
 
-References:
-- `references/<wiki>-schema.md` — DB schema + IDs
-- `references/merge-algorithm.md` — dedup/update логика
-- `references/fingerprints.md` — fingerprints per source
-- `references/sources/*.md` — per-source collectors
+A real bug typically surfaces in 2-4 sources at once. Cross-source
+merging makes them one candidate, not four.
 
----
+Common merge patterns:
 
-## Layer 1: Refresh
+- **Tracker → Error monitor.** Tracker ticket text often references an
+  error-issue ID. A regex pull merges the tracker fingerprint into
+  the error candidate, marking status `Tracked` and attaching the
+  ticket link.
+- **VCS → Error monitor.** A revert or hot-file commit on the same
+  area as an active error candidate is strong correlation. Attach
+  the commit refs.
+- **Logs → Error monitor.** Same handler + same error class in two
+  sources is one bug, not two.
 
-Для каждого source:
+Merge in a second pass after individual sources have produced their
+own candidates — otherwise you can't tell what's new vs what's
+already represented elsewhere.
 
-1. **Find `last_run`.** Read source page. Search `last_run:` в коде/параграфе (не HTML-комментарий — <wiki> escape'ит). Если нет — 7 days ago.
-2. **Collect delta** через `references/sources/<source>.md`:
-   - **Discovery** (новые сигналы) — окно `[last_run, today]`.
-   - **WoW trend** (rate / ratio / volume сравнения) — фиксированное окно `last 7d` vs `prior 7d`, **независимо от `last_run`**.
-3. **Update source page** — prepend `## Updates YYYY-MM-DD`, bump `last_run` (плейн code block: `` `last_run: YYYY-MM-DD` ``). Никогда не переписывать старое.
-4. **Emit signals** — list `{fingerprint, title, source, severity_hint, signal_refs}` для Layer 2.
+## Trend lifecycle for candidates
 
-Source pages: `NOTION_SRC_GITLAB`, `NOTION_SRC_ASANA`, `NOTION_SRC_GRAFANA`, `NOTION_SRC_<data-warehouse>`, `NOTION_SRC_AMPLITUDE`, `NOTION_SRC_NOTION_DOCS`.
-<error-monitoring>: создать под `NOTION_REVIEW_PARENT` если нет.
+Each candidate carries a status and a trend marker:
 
-**First-run.** Source pages без `last_run` → 7 days back + добавить marker. <error-monitoring> не существует → создать под Review.
+- **New** — first surfaced this run
+- **Active** — surfaced this run, no related tracker
+- **Tracked** — surfaced this run, has a tracker ticket
+- **Declining** — was Active/Tracked, didn't surface this run, but
+  not yet known-fixed
+- **Gone** — confirmed resolved (error monitor resolved, ticket
+  closed)
+- **Closed** — three Declining runs in a row → auto-archive
+- **Regression** — fingerprint matches a Closed entry → reopen as
+  Active
 
----
+Don't delete Closed entries. They're the seed for regression
+detection — a fingerprint reappearing after Closed is a stronger
+signal than a brand-new fingerprint.
 
-## Layer 2: Bugs
+## Idempotency under flexible cadence
 
-Применить `references/merge-algorithm.md` к Bug Candidates DB. **Все writes делегируются `/bug-nominate silent=true`** — Layer 2 сам в <wiki> не пишет.
+The default cadence is weekly, but daily runs are useful for actively
+monitored periods (post-incident, near release) — provided counters
+are idempotent within an ISO week.
 
-1. Query все existing rows
-2. Build `fingerprint → row_id` map
-3. Per incoming signal — собрать args (`title`, `fingerprint`, `status`, `severity`, `sources`, `asana_link`, минимальный `body_markdown` = Symptom + Signal refs) и вызвать `/bug-nominate silent=true`. bug-nominate сам решит CREATE vs UPDATE по fingerprint:
-   - new fingerprint → CREATE с trend=New, status=Active
-   - existing & not Closed → UPDATE properties (без `body_markdown` → не трогать body bug-dig'а)
-   - existing & Closed → передать `status=Regression` → bug-nominate перезапишет
-4. Existing Active/Tracked НЕ matched в этом прогоне:
-   - <error-monitoring> resolved / <task-tracker> closed → `/bug-nominate silent=true status=Closed trend=Gone`
-   - else → `/bug-nominate silent=true trend=Declining` (без обновления даты последнего события)
-   - 3 weeks Declining подряд → auto Closed
-5. Compute Severity + rank score (см. merge-algorithm.md), передать в args
-6. Log в чат после прогона: `N new | M regressed | K closed | total active = X`
+Concretely: the "weeks seen" counter on a candidate increments
+**only when the ISO week of the last-seen date changes**. Multiple
+runs in the same ISO week don't inflate the count. This makes daily
+or twice-daily runs safe.
 
-**Никогда не удалять rows.** Closed — для regression detection.
+## Never delete, only mark
 
-### Почему silent mode
+Closing or archiving is reversible (trend = Closed). Deleting is
+not. The candidate database is the institutional memory of "what was
+broken once" — losing rows loses regression-detection value.
 
-- bug-review batch-обрабатывает 50+ сигналов; интерактивный confirmation на каждом сделает скилл неюзабельным
-- bug-nominate в silent mode пишет молча, но всё равно репортит в чат строку `✓ Bug Candidates: <CREATE|UPDATE> «...»` для каждой записи — сводный лог сохраняется
-- Для всей schema-логики (mapping property names, dedup по fingerprint, защита body от перезаписи) — bug-nominate single source of truth. Layer 2 не дублирует.
+## Output shape
 
-### Что Layer 2 не делает
+After a full run, summarize to chat:
 
-- ❌ Не пишет в <wiki> напрямую (всё через bug-nominate)
-- ❌ Не дописывает root-cause анализ / план фиксов / вердикт — это работа bug-dig'а, который потом тоже идёт через bug-nominate
-- ❌ Не передаёт `body_markdown` в UPDATE existing — иначе сотрёт investigation
-
----
-
-## Layer 3: QA synthesis
-
-Regenerate `NOTION_QA_REVIEW` from scratch. Pull from:
-- Bug Candidates (top Active by score)
-- Source pages `## Updates` last run
-- Deltas: "N new this week", "M regressions", "K tracked → closed"
-
-Если page `deleted=true` — recreate под `NOTION_REVIEW_PARENT` с title "QA Review", обновить `NOTION_QA_REVIEW` в Constants.
-
-Структура страницы — стабильная, чтобы week-over-week diff читался.
-
----
-
-## Output
-
-В чат после `all` или `bugs`:
 ```
 Weekly review YYYY-MM-DD — done
-  Sources refreshed: 7/7
-  Candidates: N new | M regressed | K auto-closed | X active total
+  Sources refreshed: N/M
+  Candidates: X new | Y regressed | Z auto-closed | T active total
   Top 5 by score:
-    1. [High] ... (<error-monitoring> + <task-tracker>, 3 weeks)
+    1. [High] <title> (<sources>, <weeks seen>)
     ...
-  Run bug-dig on top candidates.
+  Run deep investigation on top candidates.
 ```
 
-Не дампить все строки. Полная таблица в <wiki>.
+Don't dump every row. The full table is in the database; chat is for
+overview + the few things demanding attention now.
 
----
+## Workflow per source (Layer 1: Refresh)
 
-## Source collectors
+For each source:
 
-| Source | Produces candidates? | Recipe |
-|---|---|---|
-| <error-monitoring> | Yes | `sources/<error-monitoring>.md` |
-| <vcs> | Yes (revert/hot-file/critical-path) | `sources/<vcs>.md` |
-| <task-tracker> | Yes (open BUG tasks) | `sources/<task-tracker>.md` |
-| <metrics>/<logs> | Yes (error-rate spikes) | `sources/<metrics>.md` |
-| <analytics> | Yes (errors + funnel drops); new events = Low/FYI | `sources/<analytics>.md` |
-| <data-warehouse> | Yes (tool failure rate) | `sources/<data-warehouse>.md` |
-| <wiki> docs | **No** — context-only | `sources/<wiki>-docs.md` |
+1. **Find `last_run`.** Read the per-source state page; pull the
+   stored last-run date. If absent, default to 7 days back and add
+   the marker.
+2. **Collect deltas in two windows.**
+   - Discovery (new signals) → `[last_run, today]` window.
+   - Trend signals (rates/ratios) → fixed `last 7d vs prior 7d`,
+     independent of `last_run`.
+3. **Append to source page** under `## Updates YYYY-MM-DD`. Bump
+   `last_run`. Never rewrite old content — append-only preserves the
+   audit trail.
+4. **Emit signals** for Layer 2 to process.
 
-**First-run caveats:**
-- <error-monitoring> source page нет — создать
-- <data-warehouse> schema — derive from dashboard panel (Option A в `<data-warehouse>.md`), cache
-- <wiki>-docs watched-doc IDs — resolve и cache на первом run
+## Workflow for candidates (Layer 2: Bugs)
 
-**Cross-source merge:**
-- <task-tracker> → <error-monitoring>: regex `<ERROR-ID>-XXX` в <task-tracker> notes мерджит в <error-monitoring> candidate (<task-tracker>: fingerprint, Status=Tracked, <task-tracker> link)
-- <vcs> → <error-monitoring>: hot-file classifier читает Active candidates, fingerprint commits
-- <metrics> → <error-monitoring>: same handler + error class merged во второй pass
+Delegate writes to the single-writer skill (`bug-nominate`) in
+silent mode — do not write directly. Layer 2's responsibilities:
 
----
+1. Build a `fingerprint → existing-row` map from the database
+2. For each incoming signal, decide create / update / regression by
+   the existing fingerprint match
+3. Determine candidate severity and rank score
+4. Hand args to the writer, including a minimal body for new
+   candidates (Symptom + Signal refs only — full investigation is
+   added later by deep-dive)
+5. Mark non-matched Active/Tracked candidates as Declining or Gone
+   based on whether their source signal still exists
+6. Log the run summary to chat
+
+Layer 2 doesn't perform deep investigation — that's a separate skill.
+It's a fast pattern-match across many signals; investigation is slow
+craft on a few of them.
+
+## Workflow for synthesis (Layer 3)
+
+Regenerate the human-readable QA review document from scratch. Pull
+top-N candidates by score, summarize per-source updates, compute
+week-over-week deltas. Stable section structure makes WoW diffs
+readable.
+
+## Hard rules
+
+- ✅ Append-only updates to source pages with date headers
+- ✅ Idempotent counters keyed on ISO week
+- ✅ Cross-source merge as a second pass after per-source collection
+- ✅ Delegate writes to a single-writer skill — don't fan out
+- ❌ Never delete candidates — mark Closed instead
+- ❌ Never use the delta window for trend rate comparisons
+- ❌ Never auto-create tracker tickets from review output
+- ❌ Never include manual sources (chat reports, support, social) in
+  the automated candidate list — they require human triage first
 
 ## Anti-patterns
 
-- ❌ Append без `## Updates YYYY-MM-DD`
-- ❌ Skip `last_run` update → дублирующиеся signals
-- ❌ Удалить Closed rows
-- ❌ Auto-create <task-tracker> tasks
-- ❌ Non-deterministic fingerprints (timestamps, free-text)
-- ❌ Использовать `[last_run, today]` для WoW rate/ratio/volume — для трендов окно ВСЕГДА фиксированное `last 7d vs prior 7d`
-- ❌ Bump счётчика повторов если ISO-неделя последнего события совпадает с текущей. Daily-runs идемпотентны
-- ❌ Manual Trustpilot/Telegram сигналы автоматически в Bug Candidates
+- ❌ Single-source review — under-reports systematically
+- ❌ Comparing rates over windows of different lengths — false
+  improvements appear
+- ❌ Non-deterministic fingerprints (timestamps, free text) — every
+  run looks like "all new"
+- ❌ Bumping counters per run instead of per-ISO-week — counts
+  inflate, signal degrades
+- ❌ Deleting Closed candidates — regression detection breaks
+- ❌ Mixing investigation prose into review output — Layer 2 is fast
+  triage, deep-dive is a separate skill
+- ❌ Letting per-source state drift (no `last_run` marker, no
+  append-only updates) — runs become non-idempotent

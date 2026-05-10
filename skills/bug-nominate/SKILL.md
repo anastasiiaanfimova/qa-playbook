@@ -1,219 +1,214 @@
 ---
 name: bug-nominate
 description: >-
-  Single owner of writes to the Bug Candidates <wiki> DB. Two modes: interactive
-  (draft+confirm in chat — default, used by bug-dig) and silent (write directly,
-  used by bug-review batch). Auto-detects create vs update by fingerprint. Does
-  not investigate — that's bug-dig. Does not create <task-tracker> tasks — that's task-create.
-  Trigger: "bug-nominate", "запиши в кандидаты", "добавь в candidates",
-  "зафиксируй вердикт", "номинируй баг". Also called automatically by bug-dig
-  (interactive) and bug-review (silent).
+  Methodology for the "single writer" pattern when persisting bug candidates
+  to a durable knowledge base. Separates investigation from durable write,
+  protects investigations from routine metadata bumps, handles fingerprint-
+  based deduplication, and supports both interactive and silent batch modes.
+  Tool-agnostic.
 ---
 
 # bug-nominate
 
-**Единственный writer для Bug Candidates DB.** Все остальные скиллы (bug-dig, bug-review) делегируют запись сюда. Schema живёт здесь и в `bug-review/references/<wiki>-schema.md`.
+A bug knowledge base accumulates value over time only if writes are
+disciplined. This skill captures the discipline as a "single writer"
+pattern: one place where bug candidates are persisted, called by both
+investigation flows (interactive) and weekly review batches (silent).
 
-## Constants
+## Why a single writer
 
-- `BUG_CANDIDATES_DS_ID` = `26b9b9ff63194e88af44b30a6978600d`
-- `BUG_CANDIDATES_DS_URL` = `collection://26b9b9ff63194e88af44b30a6978600d`
+Investigation, batch review, and direct user input are three different
+front-ends. They produce different shapes of evidence and run on
+different rhythms. If each writes to the database independently:
 
-Schema → `bug-review/references/<wiki>-schema.md`.
+- Schema drifts (different fields from different sources)
+- Investigations get overwritten by routine "bump" updates
+- Updates miss properties that another caller would have set
+- No single place to enforce confirmation discipline
 
----
+Solution: one skill owns writes. Other flows hand it inputs and
+delegate. The schema, dedup logic, and protection rules live in one
+place.
 
-## Inputs
+## Inputs (any combination)
 
-Принимает в любой комбинации:
-
-| Field | Required | Notes |
+| Field | Required | Purpose |
 |---|---|---|
-| `title` | yes | Page title, 1 line |
-| `fingerprint` | yes | Lowercase deterministic ID — `<error-monitoring>:<your-error-monitoring-project>-3fqz` / `<task-tracker>:1214140404778710` / `<data-warehouse>:tool=X:reason=Y` / `manual:short-slug` |
-| `status` | yes | `Active` / `Tracked` / `Closed` / `Meta` / `Regression` |
-| `verdict` | recommended | `Prod bug` / `Latent prod bug` / `<error-monitoring> noise` / `Analytics gap` / `Preventive` / `Meta / Risk signal` / `Protected` |
-| `user_impact` | recommended | `Yes` / `No` / `Unknown` |
-| `severity` | recommended | `Critical` / `High` / `Medium` / `Low` |
-| `sources` | recommended | array из <error-monitoring> / <metrics> / <data-warehouse> / <analytics> / <vcs> / <task-tracker> / <wiki> |
-| `trend` | optional | `New` для new; для updates не трогать (bug-review пересчитает) |
-| `asana_link` | optional | URL если ticket существует |
-| `body_markdown` | optional | Полное расследование. Если передан — пишется в content страницы. Если нет — см. правила ниже. |
-| `silent` | optional, default `false` | `true` → пишет молча без draft+confirm. Используется bug-review для batch ops. |
+| `title` | yes | Page title, one line |
+| `fingerprint` | yes | Deterministic ID for dedup (`<source>:<id>`, e.g. `error-monitor:PROJ-3FQZ`, `tracker:1234567`, `manual:short-slug`) |
+| `status` | yes | Lifecycle state of the candidate |
+| `verdict` | recommended | One of the four bug-dig verdicts (real / noise / theoretical / protected) |
+| `user_impact` | recommended | yes / no / unknown |
+| `severity` | recommended | Critical / High / Medium / Low |
+| `sources` | recommended | Which signal sources support this candidate |
+| `body_markdown` | optional | Full investigation. If present → written to page content. If absent → see protection rule below. |
+| `silent` | optional, default `false` | When `true`, skip draft-and-confirm; used by batch flows |
 
-Если в чате уже есть полный verdict от bug-dig — забрать данные оттуда.
+If the chat already has a complete verdict from an investigation flow,
+pull values from there rather than asking the user to repeat.
 
----
+## Body lives in content, not properties
 
-## Body markdown — где живёт расследование
+The full investigation goes into the page **content** (Markdown body),
+not into properties. Properties carry indexable metadata (status,
+severity, sources, dates) for filtering and aggregation. Body carries
+prose (symptom, root cause, action items, evidence) for reading.
 
-**Полное расследование = content страницы**, не properties. Schema cleanup от 2026-04-30.
+Why: properties have type constraints and length limits unsuitable for
+prose; bodies allow rich Markdown structure. Mixing produces awkward
+truncated descriptions in property cells and unfilterable text in
+bodies.
 
-Каноничный шаблон body (используется bug-dig + bug-nominate):
+### Canonical body template
 
-```markdown
+```
 ## Symptom
-
-<что видит пользователь / что сломано — 1-2 параграфа>
+<what user sees / what's broken — 1-2 paragraphs>
 
 ## Verdict
-
-<одна строка с вердиктом + причиной>
+<one line: verdict + reason>
 
 ## Signal refs
-
-<bullet-list: <error-monitoring> IDs, <task-tracker> GIDs, <logs> queries, commit hashes, file paths>
+<bulleted: error IDs, ticket IDs, log queries, commit hashes, file paths>
 
 ## Root Cause
+<paragraph(s) — why it happens, with code references>
 
-<параграф(ы) — почему это происходит, с кодовыми ссылками / номерами строк>
-
-<!-- Mirrors task-create § Action items (имя секции синхронизировано) -->
 ## Action items
-
-<директивный список действий команды на продуктовом языке. <wiki> = research doc, поэтому здесь можно держать несколько вариантов фикса (config / guard / systemic) для дальнейшего обсуждения. На <task-tracker> попадает уже выбранный план через task-create — там action items отбираются и сопровождаются метками уровней (Backend/Frontend, Hot-fix/Proper/Architectural, Required/UX/Optional) только когда правки разные по природе.>
+<directive list, product language. The knowledge base allows multiple
+fix options for discussion; the chosen one moves to the tracker via a
+separate ticket-creation skill.>
 
 ## User Impact
-
-<параграф — financial / UX / counts>
+<paragraph — counts, financial, UX>
 
 ## Source data
-
-<bullet-list: какие queries / files / commits легли в основу>
+<bulleted: queries / files / commits the investigation drew on>
 ```
 
-Секции можно опускать если нерелевантно (preventive — без User Impact; risk signal — без Action items; bug-review-минимум — только Symptom + Signal refs).
+Sections can be omitted when not relevant. Preventive findings have
+no User Impact; risk signals have no Action items; first-pass
+candidates from batch review have only Symptom + Signal refs.
 
-**Минимальный body** для bug-review при создании нового signal (когда расследования ещё нет):
+### Minimal body for batch creates
 
-```markdown
+When the batch review surfaces a new signal *before* investigation
+exists, write a minimal body — just enough that the entry isn't blank:
+
+```
 ## Symptom
-
-<title или 1 строка из source>
+<title or one line from source>
 
 ## Signal refs
-
-<source refs: <error-monitoring> IDs, <task-tracker> GIDs, commits, queries>
+<source refs>
 ```
 
----
+A later investigation flow will fill in the rest.
 
 ## Workflow
 
-### Step 1 — Resolve mode & gather inputs
+### Step 1 — Resolve mode
 
-- `silent=true`? Пропустить Step 2 (draft+confirm), идти сразу в Step 3.
-- `silent=false` (default): идём в Step 2.
+If `silent=true` → skip the draft-and-confirm step.
+If `silent=false` (default) → continue.
 
-### Step 2 — Draft в чат (interactive mode only)
+### Step 2 — Draft to chat (interactive mode only)
 
-Покажи в чате:
-- Title, Fingerprint, Status, Verdict, User Impact, Severity
-- Первые 2-3 строки body (Symptom + Verdict)
-- Mode: `CREATE` / `UPDATE properties only` / `UPDATE + replace body`
+Show:
 
-Жди подтверждения: «ок» / «пиши» / «да». Без подтверждения write-операции не делаем.
+- Title, fingerprint, status, verdict, user impact, severity
+- First 2-3 lines of body (Symptom + Verdict)
+- Detected mode: `CREATE` / `UPDATE properties only` / `UPDATE + replace body`
+
+Wait for explicit confirmation. No write before.
 
 ### Step 3 — Find existing by fingerprint
 
-```python
-mcp__notion__notion-search(
-  query=<fingerprint>, filters={},
-  data_source_url=BUG_CANDIDATES_DS_URL,
-  page_size=10
-)
-```
-
-`<wiki>-search` semantic, не exact. **Частичное совпадение fingerprint ок**, если остальные поля (title, sources) подходят по смыслу. Fetch топ-3 кандидата через `<wiki>-fetch`, выбрать тот, чей `Fingerprint` property содержит искомую часть, ИЛИ чей title совпадает по сути.
+Search the candidates database for the fingerprint. Note that most
+search APIs are semantic, not exact-match — partial fingerprint
+overlap is fine if title + sources also match.
 
 Found → Step 4. Not found → Step 5.
 
 ### Step 4 — UPDATE existing
 
-```python
-mcp__notion__notion-update-page(
-  page_id=<found_id>,
-  command="update_properties",
-  properties={
-    Status, Verdict, "User Impact", Severity,
-    "date:Last seen:start", "Weeks seen", "<task-tracker> link",
-    Sources,  # merge с existing — если новый source появился
-    Fingerprint,  # перезапись допустима
-  },
-  content_updates=[]
-)
-```
+Update **properties** that change with each surfacing:
 
-**Bumps:**
 - `Last seen` → today
-- `Weeks seen` += 1 **только если ISO-неделя сменилась** относительно предыдущего last_seen (idempotent для daily/multi-run в одну неделю)
-- `First seen` — НЕ трогать
-- `Trend` — НЕ трогать (bug-review пересчитает)
+- `Weeks seen` += 1, but **only if the ISO week changed** since the
+  previous last-seen. This makes the update idempotent for multiple
+  runs in the same week.
+- `Status`, `Verdict`, `User Impact`, `Severity` → overwrite with
+  fresh values
+- `Sources` → merge with existing (don't lose previous sources)
+- `Asana link` / tracker link → set if newly available
+- `Fingerprint` → may be overwritten if format changed
 
-**Body:**
-- Если `body_markdown` передан → второй вызов update-page с `command="replace_content"`, `new_str=body_markdown`. Перезаписывает body полностью.
-- Если `body_markdown` НЕ передан → body не трогаем. **Это важно** — защищает investigation, написанную bug-dig'ом, от стирания weekly bumps.
+Do **not** touch:
+
+- `First seen` — that's the historical anchor
+- `Trend` — owned by the batch review flow, not individual writes
+
+**Body protection rule.** If `body_markdown` was passed → replace the
+content. If not → leave content alone. This protects investigations
+written by deep-dive flows from being clobbered by routine weekly
+bumps from batch review.
 
 ### Step 5 — CREATE new
 
-```python
-mcp__notion__notion-create-pages(
-  parent={type:"data_source_id", data_source_id:BUG_CANDIDATES_DS_ID},
-  pages=[{
-    properties: {
-      Title, Fingerprint, Status, Verdict, "User Impact", Severity, Sources,
-      "date:First seen:start": today,
-      "date:First seen:is_datetime": 0,
-      "date:Last seen:start": today,
-      "date:Last seen:is_datetime": 0,
-      "Weeks seen": 1,
-      Trend: "New",
-      "<task-tracker> link": <if any>
-    },
-    content: <body_markdown OR минимальный шаблон Symptom+Signal refs>
-  }]
-)
-```
+Set the full property set:
 
-### Step 6 — Report
+- All metadata from inputs
+- `First seen` = today
+- `Last seen` = today
+- `Weeks seen` = 1
+- `Trend` = "New"
+- Body content = `body_markdown` if provided, else minimal template
 
-В чат — всегда (даже при `silent=true`):
+### Step 6 — Report (always, even silent)
 
 ```
-✓ Bug Candidates: <CREATE|UPDATE> «<title>»
+✓ Candidates: <CREATE|UPDATE> "<title>"
    url: <page url>
    verdict: <verdict>, severity: <severity>, user impact: <yes/no>
 ```
 
-Это даёт пользователю видимость даже при batch-операциях.
-
----
+Reporting on every write — including silent batch operations — gives
+the user visibility into what changed without forcing them to open
+the database. Don't suppress.
 
 ## Caller patterns
 
-### Called by bug-dig (interactive)
-
-bug-dig в Stage 7 после verdict собирает все args (включая `body_markdown` по каноничному шаблону) и вызывает `/bug-nominate` без `silent` flag → попадает в interactive mode → draft+confirm.
-
-### Called by bug-review (silent batch)
-
-bug-review в Layer 2 для каждого нового/изменённого signal вызывает `/bug-nominate silent=true`:
-- Новый signal → CREATE с минимальным body (только Symptom + Signal refs)
-- Existing signal → UPDATE properties only (без `body_markdown`) → defends investigation
-
-### Called manually
-
-Пользователь набирает `/bug-nominate` в чате — берёт verdict из чата, идёт в interactive mode.
-
----
+| Caller | Mode | What they pass |
+|---|---|---|
+| Investigation skill (deep-dive verdict) | Interactive | Full property set + canonical body |
+| Batch review (weekly signal refresh) | Silent | Properties only; no body for existing entries; minimal body for new |
+| Direct user invocation | Interactive | Whatever the user has in mind; ask for missing |
 
 ## Hard rules
 
-- ❌ Без verdict / inputs в текущем разговоре или args
-- ❌ <task-tracker> tasks — это task-create
-- ❌ В UPDATE без `body_markdown` НЕ переписывать body — защита investigation от bug-review weekly bumps
-- ❌ В UPDATE НЕ трогать `First seen` и `Trend`
-- ❌ Не использовать удалённые property `Signal refs` / `Root Cause` / `Fix Options` (мигрировано 2026-04-30)
-- ✅ Draft + confirmation перед записью (interactive mode)
-- ✅ Полное расследование — в body страницы (Markdown), не в properties
-- ✅ Reporting в чат всегда — даже при `silent=true`
+- ❌ Don't write without inputs in current conversation or explicit
+  args
+- ❌ Don't create tracker tickets — that's a separate skill
+- ❌ Don't overwrite body on UPDATE unless `body_markdown` was
+  explicitly passed (protects investigations)
+- ❌ Don't touch `First seen` or `Trend` on UPDATE
+- ✅ Draft and confirmation before write in interactive mode
+- ✅ Investigation prose lives in body; metadata in properties
+- ✅ Always report to chat, even in silent mode
+
+## Anti-patterns
+
+- ❌ Multiple skills writing to the same database directly — schema
+  drift inevitable
+- ❌ Storing investigation text as a property — truncates, can't
+  format, can't search
+- ❌ Bumping "Weeks seen" daily instead of per-ISO-week — produces
+  meaningless inflated counts
+- ❌ Treating dedup search as exact-match when API is semantic —
+  misses fingerprint variants
+- ❌ Creating duplicate entries when partial fingerprint match exists
+- ❌ Silent batch operations with no chat report — user has no
+  visibility
+- ❌ Mixing investigation flow with persistence flow in one skill —
+  two responsibilities, conflate at your peril

@@ -1,181 +1,245 @@
 ---
 name: billing-trace
 description: >-
-  Трейс платежа в <product>: по payment_id, tx hash, payment_address или email
-  находит DB-запись, <logs> webhook-логи, on-chain статус. Главная цель — понять
-  почему платёж не подтверждён. Crypto (ForumPay) first; Stripe/другие провайдеры
-  по упрощённой схеме.
-  Trigger: "billing-trace", "трейс платежа", "почему платёж не подтверждён",
-  "проверь оплату", "payment stuck", "крипто не прошло".
+  Methodology for tracing a payment through DB record → webhook logs →
+  external settlement → diagnostic tree, to answer "why isn't this payment
+  confirmed?". Tool-agnostic; covers the cross-environment-routing trap and
+  the difference between "settlement confirmed" and "credits granted".
 ---
 
 # billing-trace
 
-## Constants
+A "stuck" payment is rarely one thing. It's a chain: the user paid
+somewhere, the provider recorded it, an external settlement layer
+confirmed it, the provider sent a webhook to your backend, your
+handler updated the DB, your business logic granted credits. Each
+hop has a failure mode. The methodology walks the chain from
+visible-to-user (DB record) outward to the parts only the provider
+can see.
 
-- `WEBHOOK_URL_CRYPTO` = `https://api.zncr.pro/api/v1/payments/crypto/webhook`
-- `WEBHOOK_HANDLER` = `backend/app/handlers/crypto/webhook.py:56`
-- `FORUMPAY_CLIENT` = `backend/infra/external/clients/http/forumpay.py:62`
-- `LOKI_PROD` = `{environment="prod", service_name="backend"}`
-- `LOKI_OPENMOV_STG` = `{service_name="openmov-backend-staging"}`
-- `GRAFANA_PROD_DS` = `efgtpv5l3vqpsc`
+## What you accept as input
 
-Принимать что есть — любой из: payment_id, payment_address, tx hash (0x...), user email, reference_no.
+Any of:
 
----
+- `payment_id` from the provider
+- `payment_address` (for blockchain-backed payments)
+- transaction hash (for on-chain payments)
+- user email
+- reference / order number from the provider
+
+The skill derives the rest. Don't refuse to start because you "only
+have an email" — the email finds the user, the user finds recent
+payments, the payments give you everything else.
 
 ## Stage 1 — DB lookup
 
-### Crypto payment
+The local DB is your fastest signal. Before going to logs or
+external systems, see what your own backend thinks happened.
 
-```sql
--- По адресу или ID платежа (staging MCP или <metrics> prod datasource)
-SELECT id, user_id, status, payment_address,
-       amount, currency, created_at, expired_at, confirmed_at, updated_at
-FROM crypto_payment
-WHERE payment_address = '<address>'
-   OR id = '<payment_id>';
-```
+Pull the payment record by whatever identifier you have:
 
-```sql
--- По email пользователя (последние 5)
-SELECT cp.id, cp.status, cp.payment_address,
-       cp.created_at, cp.expired_at, cp.confirmed_at, cp.updated_at
-FROM crypto_payment cp
-JOIN "user" u ON u.id = cp.user_id
-WHERE u.email = '<email>'
-ORDER BY cp.created_at DESC LIMIT 5;
-```
+- By `payment_address` or `id` (one row)
+- By user email (last 5, joined through user table)
 
-**Читаем статус:**
+Read the status field with care:
 
-| status | Что значит |
+| status | What it means |
 |---|---|
-| `waiting` | Платёж создан, ждёт on-chain транзакции или webhook |
-| `processing` | Webhook получен, обрабатывается |
-| `completed` | Платёж подтверждён, кредиты начислены |
-| `failed` / `expired` | Истёкший или упавший платёж |
+| `waiting` | Created, awaiting external settlement or webhook |
+| `processing` | Webhook received, mid-handling |
+| `completed` | Confirmed, business effects (credits, etc.) granted |
+| `failed` / `expired` | Terminal failure |
 
-⚠️ `confirmed_at = NULL` при `status = waiting` → webhook не пришёл или не нашёл запись.
-⚠️ `updated_at = NULL` → запись не менялась с момента создания.
+Watch for these tell-tale states:
 
-> **Важно:** `mcp__postgres__query` подключён к **staging** БД. Для prod → <metrics> datasource `GRAFANA_PROD_DS` через `mcp__grafana__query_prometheus` или `describe_<data-warehouse>_table` / `query_<data-warehouse>`.
+- `confirmed_at = NULL` while `status = waiting` → webhook never
+  arrived, or arrived but didn't match
+- `updated_at = NULL` (or = `created_at`) → record hasn't moved at
+  all since creation
 
-### Другие провайдеры
+⚠️ **Environment trap.** If your DB MCP is connected to staging,
+queries return staging data. A payment confirmed in production but
+queried in staging looks "stuck". Always know which environment
+your queries hit; for prod, route through whatever read-only path
+exists (metrics dashboard datasource, read replica, etc.).
 
-```sql
--- Stripe
-SELECT id, status, checkout_session_id, created_at
-FROM stripe_transaction WHERE user_id = (SELECT id FROM "user" WHERE email = '<email>')
-ORDER BY created_at DESC LIMIT 5;
+For non-blockchain providers, also check the provider-specific
+transaction table and the generic credit-transaction log — the
+generic log is the place to confirm whether credits actually got
+granted, regardless of which payment provider produced them.
 
--- Общий лог кредитов (любой провайдер)
-SELECT ct.source, ct.amount, ct.resulting_amount, ct.created_at, ct.meta
-FROM credit_transaction ct
-JOIN "user" u ON u.id = ct.user_id
-WHERE u.email = '<email>'
-ORDER BY ct.created_at DESC LIMIT 10;
-```
+## Stage 2 — Webhook logs
 
----
-
-## Stage 2 — <logs> webhook logs
-
-### ForumPay webhook hits (по payment_id)
+The DB record tells you what your backend *thinks*. Logs tell you
+what your backend *received*.
 
 ```
 {environment="prod", service_name="backend"} |= "<payment_id>"
 ```
 
-**Что ищем:**
-- `status=201` → webhook получен и обработан успешно
-- `"Crypto payment not found for payment_id: ..."` → webhook пришёл, но payment_id не найден в той БД
-- `status=400` с `"payment not found"` → мискаст (ForumPay шлёт на неправильный backend)
-- Нет записей вообще → webhook не долетел
+What to look for:
 
-### Если опеnmov staging / payment со staging.openmov.ai
+- HTTP `200`/`201` from webhook handler → received and processed
+- `"payment not found for payment_id: ..."` → webhook arrived, but
+  no matching DB record (cross-environment routing — see below)
+- `400` with "not found" → webhook misrouted (provider sent to the
+  wrong host)
+- No log entries at all → webhook never reached your backend
 
-Проверять **оба** stream-а параллельно:
+### Cross-environment routing trap
+
+Most payment providers configure the webhook callback URL **on
+their dashboard, per provider account / POS ID** — not per-request
+from your code. If staging and production share the same provider
+account / POS ID, both environments share the same callback URL.
+Result: prod payments fire webhooks at staging (or vice versa);
+the receiving environment doesn't know about the payment_id from
+the other DB.
+
+Symptoms of this trap:
+
+- Logs show webhook arrived with `400 not found` errors
+- Production DB has the payment record but it's stuck `waiting`
+- Staging logs (a separate stream) show the matching webhook
+  arrival
+
+Mitigation patterns:
+
+- Separate provider POS IDs per environment
+- Dynamic `notify_url` passed to the provider on payment creation
+  (if the provider supports it)
+- Environment-aware proxy that re-routes misdirected webhooks
+
+When this trap is the diagnosis, document it explicitly so the team
+knows the architectural risk.
+
+### Parallel-environment search
+
+If the user-flow could span environments (legacy staging app
+mounted under prod domain; cross-env preview deployments), search
+**both** log streams in parallel:
+
 ```
 {environment="prod", service_name="backend"} |= "<payment_id>"
-{service_name="openmov-backend-staging"} |= "<payment_id>"
+{service_name="<other-backend-service>"} |= "<payment_id>"
 ```
 
-⚠️ ForumPay шлёт webhook по callback URL, настроенному для `POS_ID` на ForumPay-дашборде. В коде callback URL **не передаётся** в StartPayment — он зафиксирован в настройках POS на стороне ForumPay.
+The webhook can land in only one — the other shows nothing.
 
-### Scale query (масштаб за период)
+### Webhook callback URL — gotcha
+
+For most providers, the callback URL is **not** passed in the
+"start payment" call from your code. It's pinned to provider
+configuration. Don't assume your code has control over where the
+webhook goes; check the provider dashboard.
+
+## Stage 3 — External settlement check (provider-side)
+
+Some payment types (cryptocurrency, bank transfer, etc.) have an
+external settlement step before the provider sends a webhook.
+
+If you have a transaction reference (chain hash, bank reference):
+
+1. **Check your logs** — does the backend already mention this
+   reference?
+2. **Check the external explorer / status page** — is the
+   transaction confirmed? Confirmed when? With what destination?
+3. **Match destination** against your DB record's expected address
+   / account
+4. **Match timestamp** against the payment's `expired_at` — was it
+   in the valid window?
+5. **If externally confirmed but DB still `waiting`** → webhook
+   step failed → back to Stage 2
+
+External settlement confirmation alone doesn't mean credits were
+granted. Many "stuck" payments are settled externally but the
+webhook→DB→credits chain broke at one of the later steps.
+
+## Stage 4 — Diagnostic tree
 
 ```
-sum(count_over_time({environment="prod", service_name="backend"} |= "crypto/webhook" [1h]))
-```
-
----
-
-## Stage 3 — On-chain (только ForumPay / crypto)
-
-Если есть tx hash (0x...):
-1. Проверить <logs>: `|= "<tx_hash>"` — видел ли backend
-2. Etherscan (для ETH/USDC): паттерн `https://etherscan.io/tx/<hash>` — статус, timestamp, to-address
-   - `to` должен совпадать с `crypto_payment.payment_address`
-   - Timestamp транзакции vs `crypto_payment.expired_at` — была ли в окне оплаты?
-3. Если on-chain confirmed, но DB status=waiting → webhook не прошёл → Stage 4
-
----
-
-## Stage 4 — Diagnostic tree (crypto stuck)
-
-```
-Status = waiting + on-chain confirmed?
+DB status = waiting + external settlement confirmed?
 │
-├── Webhook logs в <logs> для payment_id?
-│   ├── ДА, status=400 "not found" →
-│   │   Misrouted webhook: ForumPay шлёт на api.zncr.pro,
-│   │   но платёж в другой БД (openmov staging ≠ <product> prod).
-│   │   Причина: один POS_ID для staging + prod → один callback URL.
-│   │   Fix: разные POS_ID для каждой среды, или динамический notify_url.
+├── Webhook logs found for payment_id?
+│   ├── YES, status=400 "not found" →
+│   │   Misrouted webhook (cross-environment routing trap).
+│   │   Provider's callback URL points at the wrong backend
+│   │   for this payment's environment.
 │   │
-│   ├── ДА, status=201 → payment completed в <product> prod DB,
-│   │   но смотришь в staging DB. Проверь prod datasource.
+│   ├── YES, status=2xx → Payment completed in another DB;
+│   │   you're querying the wrong environment.
 │   │
-│   └── НЕТ webhook логов →
-│       Webhook не приходил. Варианты:
-│       a) ForumPay POS callback URL указывает на другой хост
-│       b) ForumPay не получил on-chain confirmation (нужно проверить
-│          ForumPay dashboard для POS_ID)
-│       c) Сетевой блок (таймаут, неправильный POS_ID)
+│   └── NO logs found →
+│       Webhook never arrived. Possible:
+│       a) Provider callback URL points at a host you don't see
+│       b) Provider hasn't received the external confirmation yet
+│          (check provider dashboard)
+│       c) Network block on the callback (timeout, bad credential)
 │
-└── Webhook logs есть, status confirmed →
-    Кредиты начислены? Проверить credit_transaction по user_id.
-    Если нет → баг в webhook handler (Stage 3 код).
+└── Webhook logs found, status confirmed →
+    Were credits actually granted?
+    Check the credit-transaction table by user_id.
+    No → bug in the webhook handler / business-logic layer.
 ```
 
----
+The tree narrows from "is the chain complete?" down to a specific
+hop where evidence breaks.
 
-## Stage 5 — Code check (если webhook handler упал)
+## Stage 5 — Code check (only if handler logic is the suspect)
 
-Читать `WEBHOOK_HANDLER`:
-- Как ищет payment: по `payment_id` или `payment_address`?
-- Что делает при `not found`: 400 или silent?
-- Transaction scope: кредиты начисляются внутри `transaction_manager`?
-- Idempotency: проверяет ли `confirmed_at IS NOT NULL` перед начислением?
+If the diagnostic tree points at the handler:
 
----
+- How does the handler look up the payment — by ID or by address?
+- What does it do on `not_found` — 400, or silent?
+- Is the credit-grant inside the same transaction as the
+  status-update? If not, partial-failure can leave status updated
+  with credits ungranted.
+- Idempotency: does the handler check `confirmed_at IS NOT NULL`
+  before granting credits? If not, repeated webhooks can
+  double-grant.
+
+These are the four common handler bugs in payment-completion code.
 
 ## Output
 
-1. **Статус платежа** — DB snapshot: status, created/expired/confirmed_at
-2. **Webhook history** — что приходило, когда, с каким результатом
-3. **On-chain** — confirmed / не confirmed, в окне или нет
-4. **Diagnosis** — конкретная причина из diagnostic tree
-5. **Рекомендация** — fix options или "всё OK, кредиты начислены"
+A trace document with these sections:
 
-Если нашли баг → направить в `/bug-nominate` или `/task-create`. Не создавать <task-tracker>-задачи автоматически.
+1. **Payment status** — DB snapshot: status, timestamps
+2. **Webhook history** — what arrived, when, with what result
+3. **External settlement** — confirmed or not, in window or not
+4. **Diagnosis** — the specific branch of the tree that fits
+5. **Recommendation** — fix options or "actually OK, credits
+   granted"
 
----
+If a bug is found → recommend filing through the dedicated bug
+recording skill / ticket creation skill. **Don't create tickets
+automatically.**
+
+## Hard rules
+
+- ✅ Always know which environment your DB query hits
+- ✅ Treat "external settlement confirmed" as one hop in the chain,
+  not as the end
+- ✅ Check both environments for webhook logs when cross-environment
+  routing is plausible
+- ✅ Surface the misrouted-webhook architecture risk explicitly when
+  it's the diagnosis
+- ❌ Don't conclude "webhook didn't arrive" before checking logs in
+  every plausible environment
+- ❌ Don't conclude "payment is fine" from external confirmation
+  alone — credits granted is the real "fine"
+- ❌ Don't auto-create tracker tickets
 
 ## Anti-patterns
 
-- ❌ Смотреть только в staging DB и делать вывод про прод
-- ❌ "Webhook не пришёл" без проверки <logs> (может быть, пришёл на другой backend)
-- ❌ Считать on-chain confirmation достаточным — нужно ещё что webhook его обработал
-- ❌ Один POS_ID для staging + prod — это архитектурный риск, фиксировать в диагнозе
+- ❌ Querying staging DB and reporting on prod state
+- ❌ "Webhook didn't arrive" without checking logs, or checking
+  only one stream when multiple are plausible
+- ❌ Treating settlement confirmation as the endpoint — credits
+  granting is downstream and can fail independently
+- ❌ Ignoring that the provider callback URL is on the *provider*,
+  not in your code — assuming code controls something it doesn't
+- ❌ Missing the cross-environment-routing diagnosis because both
+  environments share one provider account — surface it explicitly
+- ❌ Concluding "ok, webhook handled" without verifying credits
+  actually landed in the user's balance / credit log

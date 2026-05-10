@@ -1,392 +1,358 @@
 ---
 name: task-create
 description: >-
-  Create a well-formatted <task-tracker> bug task for <product>. Use after bug-dig
-  confirms a real bug. Covers required sections, field values, HTML formatting
-  rules, and the writing style the team expects. Always show draft for approval
-  first; NEVER create the task without explicit user confirmation.
-  Trigger: "создай задачу", "заведи задачу", "оформи баг", "create bug task", "log a bug".
+  Methodology for writing bug tickets that read well to both product and
+  engineering. Two-layer structure (Product layer / Engineering layer),
+  required sections per bug type, priority logic with downstream-effect
+  awareness, and writing rules that survive review. Tool-agnostic.
 ---
 
 # task-create
 
-## Constants
+A bug ticket has two readers — product and engineering — with very
+different needs. The methodology splits the body into two layers so
+neither audience has to dig through the other's content. Above that,
+naming, priority assignment, and writing style decide whether the
+ticket gets read at all.
 
-- `ASANA_PROJECT` = `<YOUR_TASK_TRACKER_PROJECT_ID>`
-- `ASANA_FIELD_TYPE` = `1210659552576086`
-- `ASANA_FIELD_PRIORITY` = `1210283371559268`
-- `TYPE_BUG` = `1210659552576089`
-- `TYPE_TECH_DEBT` = `1214086483702992`
-- `TYPE_ENHANCEMENT` = `1210659552576088`
-- `TYPE_FEATURE` = `1210659552576087`
-- `TYPE_RESEARCH` = `1214086483702991`
-- `TYPE_QA` = `1210875975774528`
-- `PRIORITY_CRITICAL` = `1211912615894091`
-- `PRIORITY_HIGH` = `1210283371559271`
-- `PRIORITY_MEDIUM` = `1210283371559272`
-- `PRIORITY_LOW` = `1210283371559273`
-- `SENTRY_URL` = `https://<error-monitoring>.zncr.pro/`
+Hard rule: **always show a draft and wait for explicit confirmation
+before creating or updating a ticket.** Apply at the skill boundary,
+no exceptions.
 
-**HARD RULE: всегда показать черновик и ждать "да/пиши/создавай" перед записью.**
+## Two templates: bug vs initiative
 
----
+Pick by signal:
 
-## Routing
-
-| Инпут | Действие | Состав |
-|---|---|---|
-| "создай баг" без ссылки | Step 0 → дубль-чек → новая задача | **Product layer + Engineering layer** (оба модуля, разделитель `<hr />`) |
-| "создай баг" + ссылка на задачу | Комментарий через `asana_create_task_story` | Product layer, Engineering layer, или оба — на выбор по контексту |
-| Дубль найден, "обновить" | Комментарий через `asana_create_task_story` | как выше |
-| "обнови цифры" | Это `task-comment`, не сюда | — |
-
-**Связанный отдельный issue.** Если в расследовании всплыл second <error-monitoring> issue с собственным User Impact и собственным фиксом — заводить **отдельную задачу** (или subtask), не "Дополнительная находка" в одном теле. Один тикет = один баг.
-
----
-
-## Step 0 — Дубль-чек
-
-Обязателен кроме случая "пользователь дал ссылку на задачу".
-
-1. Из бага 2-3 ключевых слова (имя исключения, фича, провайдер, endpoint)
-2. `asana_search_tasks(text=<keywords>, projects_any=ASANA_PROJECT)`
-3. Показать найденное (название + ссылка + статус) в чате
-4. Если похожие — спросить: обновить / новая
-5. "обновить" → комментарий, "новая" → Step 1
-
-Не перебарщивать с запросами: 1-2 точечных. >5 результатов — топ-3.
-
----
-
-## Step 1 — Название
-
-Юзер-симптом, без HTTP-кодов, путей API, имён классов и функций. Pattern: `<Что видит юзер> — <Где/когда>`.
-
-- **Что видит юзер** — продуктовый симптом, понятный без знания кода (обязательно)
-- **Где/Когда** — экран, фича, бренд, условие (если нетривиально)
-
-Примеры:
-- `Регистрация с заблокированного email-домена: системная ошибка вместо понятного отказа`
-- `Openmov: у анонимных юзеров не работает скрытие заблокированных инструментов`
-- `Stripe checkout: после оплаты юзер не видит подтверждения`
-
-Запрещено в названии:
-- `[BUG]`, DEV-XXXX, эмодзи
-- HTTP-коды (`401`, `500`, `403`)
-- Endpoint-paths (`GET /api/v1/...`)
-- Имена классов/исключений (`NoSuchKey`, `BanReason enum mismatch`)
-- Технический жаргон, который продакт не поймёт
-
----
-
-## Что — Где — Когда: применяется ко всем числам в теле
-
-- **Что** — какая метрика/симптом
-- **Где** — endpoint/провайдер/экран
-- **Когда** — условие или временное окно ("за 34 дня", "с 2026-03-24 по 2026-04-27")
-
-**Правило: число без временного окна = неполное.** Always attach period. По умолчанию — `first_seen — last_seen` из <error-monitoring>.
-
----
-
-## Step 2 — html_notes
-
-Шаблон — **два независимых модуля**:
-
-- **Product layer** — что видит юзер, насколько массово, что должно происходить, что делать командам. Читает продакт.
-- **Engineering layer** — где ломается в коде, почему, критерии done. Читает разработчик.
-
-Создание задачи = оба модуля, разделитель `<hr />`. Комментарий = любой из двух или оба, на выбор. Wrap в `<body>...</body>`.
-
-### Product layer
-
-Адаптируется под тип бага. Обязательные секции — `TL;DR` и `User Impact`. Остальные — по релевантности.
-
-```
-<strong>TL;DR</strong>
-
-[Симптом юзера + cause-effect цепочка фактами. Шаблон: "<симптом юзера>. Из-за того, что <корень в продуктовых терминах>, <наблюдаемое следствие>". Без цифр, без HTTP-кодов, без имён классов/функций. Без слова "критично" — приоритет задаёт поле Priority. Без философии ("уходят с продукта", "теряют доверие") — только наблюдаемые факты. Не объяснять что такое openmov/<product>/unsensoregen — мы знаем.
-
-Эталон: "Платёж через крипту падает с системной ошибкой. Из-за того, что мы не обрабатываем эту ошибку нормально, пользователь не видит понятного сообщения и пробует оплатить снова. За множественные попытки платёжка блокирует пользователя."]
-
-<strong>User Impact:</strong> да / нет / возможно / неизвестно
-
-[да: цифры здесь — N events / N users за период + last seen + что они теряют.
-нет: если "нет" говорит всё (юзер не страдает напрямую) — без пояснения. Только заголовок и значение.
-возможно: при каком сценарии станет реальным; почему точно не знаем.
-неизвестно: что нужно проверить, чтобы понять.]
-
-**Hard-check перед показом черновика (User Impact = да):** обязательны все три:
-1. Число (N events или N users)
-2. Временное окно (`since DATE` или `за N дней` или `first_seen — last_seen`)
-3. Дата последнего события (`last seen DATE`)
-
-Если хотя бы одного нет — не показывать черновик, добрать данные. Не "пришлю follow-up комментом" — это сорвавшийся флоу.
-
-<strong>Steps to reproduce</strong> [claude-analysis]
-<ol>
-<li>[шаг]</li>
-</ol>
-
-[Опциональная секция — оставлять только если шаги несут полезную инфу. Когда юзер ничего не видит:
-— **в product layer** — <analytics>-шаги (как воспроизвести в <analytics> — этот источник смотрит продакт)
-— **в engineering layer** — <logs> / <error-monitoring> / <metrics> шаги (как воспроизвести в логах/мониторинге)
-Помечать [claude-analysis] если выведено из stacktrace без ручной проверки. Если нет осмысленных шагов — секцию пропустить.]
-
-<strong>Expected vs Actual</strong>
-<ul>
-<li><strong>Expected:</strong> [что должно происходить с точки зрения юзера]</li>
-<li><strong>Actual:</strong> [что происходит сейчас]</li>
-</ul>
-
-[Опциональная секция. Пропускать когда:
-— User Impact = нет (юзер ничего не замечает),
-— User Impact уже сам описывает что должно быть и что есть (например, "юзер ждёт 60 сек вместо 5" — это уже expected vs actual в одной формулировке).
-Не дублировать инфу из User Impact.
-
-**Когда добавлять и расширять (v2.5):** для сложных багов с несколькими уровнями фикса (минимум + идеал) или когда из User Impact + Steps непонятно что именно должно быть исправлено — секция "Expected vs Actual" может содержать **action item на продуктовом языке** (не технические критерии — те идут в Acceptance criteria в engineering layer). Например, "при сбое UI fingerprint не должен теряться; при очистке данных юзером фронт показывает понятное сообщение перелогина" — это два уровня в одном "Expected".]
-
-<strong>Action items</strong>
-
-[Действия команды в директивной форме (инфинитив или "должен"). Без имён классов/исключений/файловых путей в формулировке — те идут в `Where it breaks` / `Possible root cause`. Тест: пункт читается без знания кода проекта.]
-
-<ul>
-<li>[действие на продуктовом языке]</li>
-</ul>
-
-**Метки уровней — необязательны.** Добавлять только когда правки **разные по природе**, иначе путают. Тест: «эти пункты — один PR, один человек, один заход?» Да → меток не нужно. Нет → метка по той оси, по которой пункты различаются.
-
-Три легитимных оси (можно комбинировать через `/`):
-
-| Ось | Когда | Метки |
-|---|---|---|
-| **Платформа/слой** | Правки в разных репах/командах | `Backend` / `Frontend` / `Mobile` / `Admin` |
-| **Зрелость решения** | Один симптом можно закрыть на разной глубине, выбор по time-budget | `Hot-fix` / `Proper fix` / `Architectural` |
-| **Обязательность** | Часть правок не обязательна для закрытия задачи | `Required` / `UX` / `Optional` |
-
-Формат: `<strong>Backend (required):</strong> ...` или `<strong>Backend / Hot-fix:</strong> ...`. Контент пункта — на русском.
-
-Пример:
-<ul>
-<li><strong>Backend (required):</strong> обрабатывать ошибки от ForumPay — отдавать понятный код вместо системной ошибки</li>
-<li><strong>Backend (required):</strong> при "Active payment already exists" возвращать существующий payment_id</li>
-<li><strong>Frontend (required):</strong> подхватывать payment_id и продолжать оплату вместо новой попытки</li>
-</ul>
-
-<strong>Product risk</strong>
-<ul>
-<li>[только НЕОЧЕВИДНЫЕ риски]</li>
-</ul>
-
-[Опциональная секция. Только то, что не и так понятно. Не описывать очевидное:
-- ❌ "Потеря аналитики — это плохо" — все знают
-- ❌ "Чем дольше не чиним — тем больше дыра" — очевидно
-- ❌ "Юзеры могут уйти" — гипотетика
-- ✅ "Ошибка swallowed — <error-monitoring> не алертит, нашли только через bug-review; при следующих интеграциях со swallow-pattern такая же дыра останется незамеченной"
-- ✅ "Связанная поломка: list_all в Admin падает с тем же LookupError"
-- ✅ "449 events замусоривают error budget и маскируют другие 500-ошибки"
-Если ничего неочевидного нет — секцию пропустить.]
-```
-
-### Когда какие секции product layer пропускать
-
-| Тип бага | TL;DR | User Impact | Шаги | Expected/Actual | Action items | Риск |
-|----------|-------|-------------|------|-----------------|--------------|------|
-| Юзер видит ошибку | ✅ | ✅ да + цифры | ✅ если знаем | ✅ | ✅ | ✅ если есть неочевидное |
-| Бизнес-аналитика сломана, юзер не видит | ✅ | ✅ нет, без пояснения | ✅ <analytics>-шаги (для product), <logs> — в engineering layer | ❌ пропустить | ✅ | ✅ если есть неочевидное |
-| Tech-debt / шум в <error-monitoring> | ✅ | ✅ нет, без пояснения | ✅ если есть | ❌ обычно пропустить | ✅ | ✅ почему всё равно стоит чинить |
-| Юзер видит, но импакт неясен | ✅ | ✅ возможно + что проверить | ✅ если знаем | ✅ | ✅ | ✅ если есть |
-
-### Engineering layer — required
-
-```
-<hr />
-
-<strong>Where it breaks</strong>
-<ul>
-<li><code>backend/path/to/file.py:line</code></li>
-</ul>
-
-<strong>Possible root cause</strong>
-
-[Анализ по коду + логам — не верифицировано вручную. Какая строка raise, какой guard отсутствует. Code snippets 3-5 строк OK.]
-
-<strong>Acceptance criteria</strong>
-<ul>
-<li>[Что значит "done" — какая ошибка пропадёт, что юзер видит вместо]</li>
-</ul>
-
-<strong>Evidence</strong>
-<ul>
-<li><error-monitoring>: <a href="SENTRY_URL..."><ERROR-ID>-XXXX</a> — [N users], [N events], [timeframe]</li>
-<li><logs>: ...</li>
-<li><analytics>: ...</li>
-<li><wiki> Bug Candidates: ...</li>
-</ul>
-```
-
-### Optional engineering sections (по релевантности)
-
-| Section | Когда добавлять |
+| Signal | Template |
 |---|---|
-| `Traceback` | <logs> stacktrace объясняет лучше прозы |
-| `Deploy correlation` | <error-monitoring> first_seen совпадает с git commit — commit hash + author + дата |
-| `Scope` | Узкое impact (один endpoint, группа юзеров, только stage) |
-| `<metrics>` | <metrics> 500 ≠ <error-monitoring> — объяснить почему |
-| `Why this still matters` | User Impact = нет → downstream harm (обычно дублирует "Product risk", добавлять только если есть инженерный нюанс) |
-| `Risks of fix` | Если предлагается fix — что может сломаться. Формат: `<область> — <оценка>: <объяснение>` |
+| Reactive fix on a specific symptom, one PR, one author | **Bug** |
+| Tech-debt with one concrete fix | **Bug** |
+| Multi-stage QA initiative (test automation, regression suite, cross-team coordination) | **Initiative** |
+| Research task with multiple investigation threads | **Initiative** |
+| Phased infrastructure cleanup (PoC → MVP → expansion) | **Initiative** |
+| Existing initiative accumulated progress and needs a current-state snapshot | **Initiative (update mode)** |
+| Atomic event in an existing ticket without body change ("phase done", "request sent") | Comment, not this skill |
 
-### Disclaimer `[claude-analysis]`
+The rest of this document covers the **bug** template. Initiative is a
+different shape (TL;DR + Scope + Plan + What's added + Progress
+append-only) and is its own pattern; same hard rule about confirmation
+applies.
 
-Ставится рядом с заголовками секций product layer, выведенных из stacktrace/кода без ручной верификации:
-- **Steps to reproduce** — почти всегда `[claude-analysis]` (выведено из логов)
-- **Expected vs Actual** — `[claude-analysis]`, если "Actual" выведено из stacktrace, а не подтверждено в браузере
+## Step 0 — Duplicate check (skip only when user gave a specific URL)
 
-Engineering layer весь является claude-анализом — отдельных пометок не нужно (это понятно из контекста).
+Before creating, search the tracker for existing tickets:
 
----
+1. Pull 2-3 keywords from the bug — exception name, feature, provider,
+   endpoint
+2. Search same project, show top 3 matches with name + URL + status
+3. If similar exists — ask: comment on existing, or new ticket
+4. "Comment" → switch to comment mode
+5. "New" → continue to Step 1
 
-## Step 3 — Custom fields
+Don't over-query — 1-2 targeted searches. >5 results means you're too
+broad; tighten the keywords.
+
+## Step 1 — Title
+
+User-symptom oriented, no jargon. Pattern: `<what user sees> — <where/when>`.
+
+- **What user sees** — product symptom, understandable without code
+  knowledge (mandatory)
+- **Where/when** — screen, feature, brand, condition (optional, only
+  if not obvious from "what")
+
+Examples:
+- `Registration with banned email domain: system error instead of clear refusal`
+- `<brand>: blocked tools aren't hidden for anonymous users`
+- `<provider> checkout: user doesn't see confirmation after payment`
+
+Forbidden in title:
+- Bug-tracker prefixes (`[BUG]`, ticket IDs), emoji
+- HTTP codes (`401`, `500`, `403`)
+- API paths (`GET /api/v1/...`)
+- Class / exception names (`NoSuchKey`, `BanReason enum mismatch`)
+- Technical jargon a product reader won't decode
+
+## What-Where-When rule for numbers in body
+
+Every number needs:
+
+- **What** — which metric / symptom
+- **Where** — endpoint / provider / screen
+- **When** — time window ("over 34 days", "since 2026-03-24" or
+  `first_seen — last_seen`)
+
+**Rule: a number without a time window is incomplete.** Always attach
+the period. Default to `first_seen — last_seen` from error monitoring.
+
+## Two-layer body
+
+The body is two independent modules separated by a horizontal rule:
+
+- **Product layer** — what the user sees, scope, expected vs actual,
+  team action items. Read by product.
+- **Engineering layer** — where it breaks in code, why, acceptance
+  criteria. Read by engineering.
+
+New tickets get both. Comments can carry one or both depending on
+context.
+
+## Product layer — required and optional sections
+
+### TL;DR (required)
+
+User symptom + cause-effect chain in plain product language. Template:
+
+> `<user symptom>. Because <root cause in product terms>, <observable consequence>.`
+
+Forbidden in TL;DR:
+- Numbers (those go in User Impact and Evidence)
+- HTTP codes
+- Class / function names
+- The word "critical" / "блокер" — priority is a field, not body
+  content
+- Speculation about why users feel things ("they lose trust", "they
+  leave silently")
+- Parenthetical explanations of internal product names ("(our brand
+  for X)") — internal audience knows them
+
+### User Impact (required)
+
+Value: `yes / no / possible / unknown`.
+
+- **yes** → numbers here. N events / N users over period + last seen
+  + what users lose. Three mandatory components: a number, a time
+  window, a last-seen date. Missing one → don't show the draft, get
+  the data first.
+- **no** → if "no" says everything, no further explanation needed.
+  Just the heading and the value.
+- **possible** → under what scenario it would become real; why we
+  don't yet know.
+- **unknown** → what to check to find out.
+
+User Impact is the single most load-bearing section. It drives
+priority. Get the numbers right.
+
+### Steps to reproduce (optional, mark `[claude-analysis]` if derived)
+
+Skip if no meaningful steps known. When user-visible — UI steps. When
+business signal only (analytics) — analytics-tool steps in product
+layer; logs / monitoring / metrics steps in engineering layer.
+
+Mark `[claude-analysis]` if derived from stack trace / logs without
+manual reproduction.
+
+### Expected vs Actual (optional)
+
+Skip when:
+- User Impact = no (user sees nothing)
+- User Impact already describes the gap (e.g. "user waits 60 sec
+  instead of 5" — that's expected/actual in one phrase)
+
+Otherwise, fill it. For complex bugs with minimum-vs-ideal fix
+levels, this section can carry a product-level action item ("on
+fingerprint failure UI must not lose state; on data wipe show clear
+re-login message"). Engineering-level acceptance criteria stay in
+the engineering layer.
+
+### Action items (required)
+
+Imperative phrasing or "must / should". Product language; no class
+names, exception types, or file paths. Test: can a non-engineer read
+this and know what they want done?
+
+**Level labels are optional.** Add only when items are *different in
+nature*. Test: "is this one PR by one person in one sitting?" Yes →
+no labels. No → label by the axis along which items differ.
+
+Three legitimate axes (combinable with `/`):
+
+| Axis | When | Labels |
+|---|---|---|
+| Platform / layer | Changes in different repos / teams | `Backend` / `Frontend` / `Mobile` / `Admin` |
+| Solution maturity | Same symptom, different fix depth based on time budget | `Hot-fix` / `Proper fix` / `Architectural` |
+| Mandatory-ness | Some items aren't required to close the ticket | `Required` / `UX` / `Optional` |
+
+### Product risk (optional, non-obvious only)
+
+The trap is filling this section with truisms. The rule: **only the
+non-obvious belongs here.**
+
+Bad (everyone already knows):
+- "Loss of analytics is bad"
+- "Longer it stays unfixed, bigger the hole"
+- "Users may leave"
+
+Good (non-trivial connections):
+- "Error swallowed → monitoring doesn't alert; only found via
+  weekly review; the same swallow-pattern in any future integration
+  will hide just as silently"
+- "Related break: list_all in admin fails with the same LookupError"
+- "449 events drown the error budget and mask other 500s"
+
+If nothing non-obvious applies, skip the section.
+
+### Section table by bug type
+
+| Bug type | TL;DR | User Impact | Steps | Expected/Actual | Action items | Risk |
+|---|---|---|---|---|---|---|
+| User sees an error | ✅ | ✅ yes + numbers | ✅ if known | ✅ | ✅ | ✅ if non-obvious |
+| Business analytics broken, user sees nothing | ✅ | ✅ no, no extra explanation | ✅ analytics steps in product, logs in engineering | ❌ skip | ✅ | ✅ if non-obvious |
+| Tech debt / monitoring noise | ✅ | ✅ no, no extra explanation | ✅ if any | ❌ usually skip | ✅ | ✅ why fix anyway |
+| User sees something, impact unclear | ✅ | ✅ possible + what to check | ✅ if known | ✅ | ✅ | ✅ if any |
+
+## Engineering layer — required structure
 
 ```
-custom_fields = {
-  ASANA_FIELD_TYPE: <TYPE_*>,
-  ASANA_FIELD_PRIORITY: <PRIORITY_*>
-}
+Where it breaks
+- file/path:line
+
+Possible root cause
+[code-derived analysis, marked as analysis (not manually verified).
+Which line raises, which guard is missing. 3-5 line code snippets ok.]
+
+Acceptance criteria
+- [what "done" means — what error disappears, what user sees instead]
+
+Evidence
+- Error monitor: <link> — N users, N events, timeframe
+- Logs: <link>
+- Analytics: <link>
+- (Whatever sources the investigation drew on)
 ```
 
-**Type:** `TYPE_BUG` / `TYPE_TECH_DEBT` / `TYPE_ENHANCEMENT` / `TYPE_FEATURE` / `TYPE_RESEARCH` / `TYPE_QA`
+### Optional engineering sections
+
+| Section | When |
+|---|---|
+| `Traceback` | Stack trace explains better than prose |
+| `Deploy correlation` | Issue first-seen matches a commit — include hash + author + date |
+| `Scope` | Narrow impact (one endpoint, one user group, staging only) |
+| `Why this still matters` | User Impact = no but downstream harm exists (skip if it just duplicates Product Risk) |
+| `Risks of fix` | Proposed fix may break X — area + assessment + explanation |
+
+### `[claude-analysis]` disclaimer
+
+Mark sections in the **product layer** that were derived from stack
+trace / code without hands-on verification:
+
+- Steps to reproduce — almost always `[claude-analysis]`
+- Expected vs Actual — `[claude-analysis]` if "Actual" was inferred,
+  not browser-verified
+
+Engineering layer is by definition derived analysis — no per-section
+marking needed there.
+
+## Step 3 — Type and Priority
+
+**Type:** Bug / TechDebt / Enhancement / Feature / Research / QA.
+Pick by what the work *is*, not what triggered it.
 
 **Priority:**
-- `PRIORITY_CRITICAL` — production broken для многих / revenue loss
-- `PRIORITY_HIGH` — real user pain (прямой ИЛИ через downstream-эффекты), reproducible, significant reach
-- `PRIORITY_MEDIUM` — real issue, limited reach или workaround
-- `PRIORITY_LOW` — no user impact, noise, tech debt
 
-**Downstream-эффекты к High (не только прямой user pain):**
-Бывают баги без прямого user-видимого симптома, но с серьёзными последствиями для команды или будущих инцидентов. Это **High**, не Medium. Маркеры:
+| Priority | When |
+|---|---|
+| Critical | Production broken for many / revenue loss |
+| High | Real user pain (direct OR via downstream effects), reproducible, significant reach |
+| Medium | Real issue, limited reach or workaround exists |
+| Low | No user impact, noise, tech debt |
 
-- **Долго не замечали** — баг живёт > 1 недели до обнаружения. Сигнализирует, что guard'ов на это нет.
-- **Уже подтверждённый ущерб** — что-то конкретное уже не работает или невозможно сделать (расследование, on-call, capacity planning, релиз). Не гипотетика.
-- **Сломанная защита** — алерты/мониторинг/тесты/observability не работают → **повышенная вероятность пропустить будущий user-видимый инцидент**. Это High даже если прямого симптома нет.
-- **Широкий reach по командам** — задевает >1 команды или >1 рабочего процесса (DevOps + Backend + on-call), даже если юзер ничего не видит.
+### High via downstream effects (not just direct user pain)
 
-Тест: «если оставить как есть на ещё неделю, что-то значимое сломается?» Если да — High. Если просто «будет неудобно но работает» — Medium.
+A bug with no direct user-visible symptom but serious team consequences
+is **High**, not Medium. Markers:
 
-**Anti-pattern:** автоматически ставить Medium только потому что "юзер не видит". Прямого user pain недостаточно для разделения High vs Medium — учитывай downstream-эффекты выше.
+- **Long unnoticed** — bug lived >1 week before discovery → no guard
+  exists for this kind of thing
+- **Confirmed damage** — something concrete already doesn't work or
+  can't be done (investigation, on-call, capacity planning, release).
+  Not hypothetical.
+- **Broken protection** — alerts / monitoring / tests / observability
+  not working → **higher chance of missing future user-visible
+  incidents**. High even without direct symptom.
+- **Wide reach across teams** — affects >1 team or >1 working
+  process, even if the user sees nothing.
 
-Difficulty не трогать (поле разработчиков).
+Test: "if we leave it for another week, will something significant
+break?" Yes → High. "Will be inconvenient but works" → Medium.
 
----
-
-## Step 4 — HTML формат
-
-**Supported:** `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`, `<ul>`, `<ol>`, `<li>`, `<a href="">`, `<hr />`
-
-**NOT supported (<task-tracker> 400 или мангл):** `<p>`, `<br>`, `<br/>`, `<h1-3>`, `<hr>` (без слеша), `<pre>`
-
-### <task-tracker>-internal links → rich mentions
-
-Ссылки на другие <task-tracker>-задачи **обязательно** оформляем как rich mentions через `data-<task-tracker>-*` атрибуты — UI автоматически подтянет имя задачи и рендерит галочку статуса (`✓` для completed):
-
-```html
-<a href="https://app.<task-tracker>.com/0/<project>/<task_gid>"
-   data-<task-tracker>-gid="<task_gid>"
-   data-<task-tracker>-accessible="true"
-   data-<task-tracker>-type="task"
-   data-<task-tracker>-dynamic="true">DEV-XXXX</a>
-```
-
-Текст внутри `<a>` <task-tracker> заменит на актуальное имя задачи. Голый `<a href>...DEV-XXXX</a>` без атрибутов рендерится как обычная ссылка-текст — теряется значимый сигнал (статус задачи + актуальное имя).
-
-Внешние ссылки (<wiki>, <vcs>, <error-monitoring>) — обычный `<a href>` без `data-<task-tracker>-*`.
-
-### Spacing — правила
-
-После заголовка `<strong>...</strong>` контент идёт на следующей строке:
-
-- **Заголовок → проза**: одна `\n` + 8 пробелов перед прозой.
-  Пример: `<strong>TL;DR</strong>\n        Текст описания...`
-- **Заголовок → список**: одна `\n`, сразу `<ul>` или `<ol>`, без пробелов.
-  Пример: `<strong>Steps to reproduce</strong>\n<ol><li>...</li></ol>`
-
-Между секциями зависит от того, чем закончилась предыдущая:
-
-- **После списка** (`</ul>` / `</ol>`) → `\n` (одна) перед следующим заголовком
-- **После прозы** → `\n\n` (две) перед следующим заголовком
-
-Внутри секции:
-
-- Новый параграф прозы → `\n\n`
-- Строка-вступление к списку (типа "Гипотезы:") → одна `\n` перед `<ul>`/`<ol>`
-
-Перед самым первым блоком (сразу после `<body>`) — без пустой строки.
-
-`<hr />` (с пробелом перед слешем) — разделитель product/engineering layers. `<hr>` без слеша или `<hr />` без пробела — <task-tracker> 400 / мангл.
-
-### Внутри `<li>`
-
-`\n` для visual spacing, каждый key fact на новую строку.
-
-### Запрещено
-
-`&#10;` (рендерится как текст), backslash escapes (`\.`, `\-` — <task-tracker> 400).
-
----
+**Anti-pattern:** defaulting to Medium just because "user doesn't see
+it." Direct user pain is *not* the only High criterion.
 
 ## Writing style
 
-- Короткие прямые предложения, без padding
-- Факты инлайн: цифры, даты, пути в прозе где влезают
-- Cause-effect через "из-за того, что", "потому что", "чтобы"
-- "Мы"-язык: "наш exception_map", "мы не логируем"
-- Пользователи по роли/количеству, не email: "пользователь из задачи", "5 пользователей"
-- Не объяснять что код делает — объяснять почему вызывает проблему
-- **Не объяснять наши продукты** в скобках (`(наш бренд для X)`, `(наша SaaS-платформа)`) — мы знаем, что такое openmov, <product>, unsensoregen
-- **Product layer — без жаргона**: HTTP-коды, имена классов, файловые пути остаются в engineering layer. Юзер-симптом описывается продуктовыми словами.
-- **Цифры — только в User Impact и Evidence**. В TL;DR и Risk цифр нет, иначе дублирование.
-- **Не выдумывать риски**. Только то, что реально вытекает из бага. Хорошие примеры: "юзер не понимает, почему не работает", "маскирует другие 500-ошибки в мониторинге", "связанная поломка в Admin". Плохие: "юзер уйдёт молча в саппорт", "потенциально может произойти X".
-- **Нейтральный тон про код и решения разработчиков**. Не использовать оценочные эпитеты ("наивный фикс", "плохое решение", "неправильно сделано", "нужно было сделать иначе"). Описывать **что произойдёт** или **что есть**, а не **какое это решение**. Плохо: "Наивный фикс одного бага создаст проблемы". Хорошо: "Фикс одного бага без учёта другого создаст проблемы".
-- **Безличный факт > я-действие**. «Нашла 10 кейсов» → «есть 10 кейсов»; «проверила что …» → «по логам …». Кто конкретно нашёл/проверил — для читателя нерелевантно, важен сам факт.
-- **Без эпитетов-наполнителей**. «Известный latent-баг» → «latent-баг». Слова "известный", "новый", "небольшой", "довольно крупный" без информационной нагрузки = шум; если читатель кликнет ссылку — узнает сам.
-
----
+- Short, direct sentences without padding
+- Facts inline: numbers, dates, paths in prose where they fit
+- Cause-effect via "because", "since", "to" — connect observation
+  with cause in one sentence
+- "We"-language for code and decisions: "our exception handler", "we
+  don't log this"
+- Refer to users by role / count, not email: "the user from the
+  ticket", "5 users"
+- Don't explain what code does — explain why it causes the problem
+- Don't explain internal product/brand names parenthetically — the
+  audience knows them
+- Product layer is jargon-free. HTTP codes, class names, file paths
+  belong in engineering layer.
+- Numbers go only in User Impact and Evidence. Not in TL;DR or Risk.
+- Don't invent risks. Only what genuinely follows from this bug.
+- Neutral tone about code and team decisions. Describe consequences
+  or facts, not judgments. Bad: "naive fix". Good: "fix that
+  addresses one bug without considering the other will cause issues."
+- Impersonal facts > "I"-action. "I found 10 cases" → "10 cases
+  exist". "I checked that..." → "logs show...". Reader doesn't care
+  who specifically found it.
+- No filler adjectives. "Known latent bug" → "latent bug". "Known",
+  "new", "small", "fairly large" carry no information; reader can
+  click through if curious.
 
 ## Anti-patterns
 
-- ❌ Skip Step 0
-- ❌ Запись без подтверждения
-- ❌ Difficulty
-- ❌ `Severity: Critical` в теле — только Priority field
-- ❌ HTTP-коды (`401`, `500`, `403`), endpoint-paths, имена классов в названии
-- ❌ TL;DR с техникой (классы исключений, имена функций, SQL/HTTP жаргон) — TL;DR читает продакт
-- ❌ Объяснение наших продуктов в скобках — мы знаем
-- ❌ Ссылки на <wiki> (Bug Candidates DB и т.п.) в Evidence — это внутренний документ QA, разработчикам не нужен. <wiki> → <task-tracker> связь поддерживается только в <wiki> (через <task-tracker> link property), обратной ссылки в <task-tracker> не делаем.
-- ❌ Цифры в TL;DR и Risk — только в User Impact и Evidence
-- ❌ User Impact внутри TL;DR — должен быть отдельной секцией
-- ❌ Выдуманные риски ("юзер уйдёт молча", "потенциально X")
-- ❌ Гипотетические утверждения про юзера в TL;DR / Actual ("часть уходит, не попробовав снова", "юзер не знает что делать", "теряет доверие") — мы не знаем точно. Пишем только то, что юзер видит/делает.
-- ❌ Философские риски про "природу проблемы" ("это постоянный фон", "ошибки будут возникать всегда") — общее место, а не специфический риск.
-- ❌ Повторение одной мысли разными словами в одном пункте Risk — если первое предложение уже сказало суть, второе про то же не пишем.
-- ❌ Очевидные риски в "Product risk" ("потеря аналитики — это плохо", "чем дольше не чиним — тем больше дыра") — пиши только то, что не и так понятно
-- ❌ Заполнять опциональные секции (Шаги, Expected/Actual, Риск) ради заполненности — пропускать, если нет осмысленного содержания
-- ❌ Дублирование Expected/Actual с User Impact — если User Impact уже описывает что должно быть и что есть, секцию Expected/Actual пропускать
-- ❌ Оценочные эпитеты про работу команды ("наивный", "плохой", "неправильный", "нужно было иначе") — писать нейтрально, описывать факт/последствие
-- ❌ Длинное пояснение к "User Impact: нет", когда "нет" говорит всё
-- ❌ Engineering layer (Where it breaks, Possible root cause) выше product layer
-- ❌ Слово "критично" в TL;DR — приоритет задаёт поле Priority
-- ❌ Философия в TL;DR / User Impact ("уходят с продукта", "теряют доверие", "юзер уходит молча") — только наблюдаемые факты + cause-effect цепочка
-- ❌ User Impact = да без N events/users или без last seen — не показывать черновик до добора данных
-- ❌ Action items с именами классов/исключений/файловых путей в формулировке — переписать на продуктовый язык. Code recipe идёт в `Where it breaks` / `Possible root cause`, не в action item. Тест: пункт читается без знания кода проекта
-- ❌ Метки уровней (`Backend / Hot-fix / Optional`) на пунктах одной природы — это меню, не план. Тест: «эти пункты — один PR, один человек, один заход?» Да → метки убрать
-- ❌ Связанный отдельный <error-monitoring> issue с собственным User Impact в "Доп. находка" одного тикета — заводить отдельную задачу или subtask. Один тикет = один баг
-- ❌ Action items без меток уровней при правках разной природы (Backend+Frontend, Hot-fix+Architectural) — метки нужны, чтобы команда поняла кто что делает
-- ❌ Medium-приоритет по умолчанию для багов без прямого user pain — учитывай downstream-эффекты: долго не замечали, уже подтверждённый ущерб способности команды работать, сломанная защита (алерты/мониторинг/тесты), широкий reach по командам. Тест: «если оставить на ещё неделю, что-то значимое сломается?» Да → High, не Medium.
-- ❌ Без Evidence
-- ❌ `<h2>`, `<p>`, `<br>` — <task-tracker> 400/мангл
-- ❌ Без TL;DR
-- ❌ Я-форма в комментариях («нашла», «проверила», «хочу понаблюдать») — переписывать безлично
-- ❌ Эпитеты-наполнители («известный», «новый», «небольшой») без информационной нагрузки
-- ❌ Анонсы собственных админ-операций («зафиксирую отдельно в Bug Candidates», «потом ещё проверю») — сделано увидится по факту, обещать не нужно
-- ❌ Упоминание имени самой задачи (`DEV-XXXX`) в комментарии этой же задачи — тавтология
-- ❌ Голые `<a href="">DEV-XXXX</a>` для <task-tracker>-internal ссылок — UI не подтянет статус и имя; использовать `data-<task-tracker>-*` (см. Step 4)
+- ❌ Skip Step 0 (duplicate check)
+- ❌ Write to tracker without confirmation
+- ❌ Severity / priority hand-waved into description body — fields
+  exist for that
+- ❌ HTTP codes, paths, class names in title
+- ❌ TL;DR with technical jargon — product reads TL;DR
+- ❌ Parenthetical explanations of internal product names
+- ❌ Numbers in TL;DR or Risk (only User Impact and Evidence)
+- ❌ User Impact buried inside TL;DR — must be its own section
+- ❌ Speculative user-behavior claims in TL;DR or Actual ("part of
+  users leave without retrying", "loses trust") — write only what
+  the user *sees / does*
+- ❌ Philosophical risks ("constant background noise", "errors will
+  always happen") — generic, not specific
+- ❌ Repeating the same idea in different words inside one Risk
+  bullet
+- ❌ Obvious risks in Product Risk ("losing analytics is bad")
+- ❌ Filling optional sections for completeness — skip if nothing
+  meaningful
+- ❌ Duplicating Expected/Actual with User Impact
+- ❌ Judgmental adjectives about team work ("naive", "wrong",
+  "should have") — neutral and factual
+- ❌ Long explanation under "User Impact: no" when "no" says
+  everything
+- ❌ Engineering layer above Product layer
+- ❌ "Critical" word in TL;DR — it's a field, not a phrase
+- ❌ User Impact = yes without N events/users or last seen — don't
+  show the draft, gather data first
+- ❌ Action items written with class names / exception types / file
+  paths — those go in `Where it breaks` / `Possible root cause`,
+  not in the user-facing item line
+- ❌ Level labels (`Backend / Hot-fix / Optional`) on items of one
+  nature — that's a menu, not a plan
+- ❌ Action items without level labels when items are different in
+  nature
+- ❌ A separate related issue with its own user impact stuffed as
+  "additional finding" in one ticket — separate findings get
+  separate tickets/subtasks
+- ❌ Default Medium for a bug with no direct user pain — apply the
+  downstream-effects test first
+- ❌ Missing Evidence section
+- ❌ "I"-form in comments ("I found", "I checked", "I want to
+  observe") — rewrite impersonally
+- ❌ Filler adjectives without information
+- ❌ Self-announcing admin operations ("I'll log this separately
+  later") — promised work isn't visible; just do it and let it show
+- ❌ Mentioning the ticket's own ID inside a comment on that
+  ticket — tautology
