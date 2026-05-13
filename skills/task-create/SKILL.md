@@ -109,7 +109,7 @@ Forbidden in TL;DR:
 - Numbers (those go in User Impact and Evidence)
 - HTTP codes
 - Class / function names
-- The word "critical" / "блокер" — priority is a field, not body
+- The word "critical" / "blocker" — priority is a field, not body
   content
 - Speculation about why users feel things ("they lose trust", "they
   leave silently")

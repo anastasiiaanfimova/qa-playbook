@@ -141,7 +141,7 @@ Update **properties** that change with each surfacing:
 - `Status`, `Verdict`, `User Impact`, `Severity` → overwrite with
   fresh values
 - `Sources` → merge with existing (don't lose previous sources)
-- `Asana link` / tracker link → set if newly available
+- `Tracker link` → set if newly available
 - `Fingerprint` → may be overwritten if format changed
 
 Do **not** touch:
