@@ -104,6 +104,7 @@ the moment to update.
 
 ## Related public repo
 
-`~/Claude/claude-configs/` — base Claude Code setup, planned migration
-to the same methodology-only pattern. Until that migration happens, it
-still uses `~/.claude/lib/push-mirror/` for sync.
+`~/Claude/claude-configs/` — base Claude Code setup. Adopted the same
+methodology-only pattern by analogy with this repo (2026-05-09 evening
+follow-on). Same manual edit-and-commit workflow; no push automation
+on either side.
