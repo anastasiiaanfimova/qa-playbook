@@ -1,5 +1,7 @@
 # QA Playbook
 
+> **Archived 2026-05-23.** Frozen methodology snapshot — read-only. The local operational config evolved past these patterns; the published version is preserved for visibility and reference. Forks welcome.
+
 A reference collection of QA methodology — written as Claude Code skills,
 but readable as standalone documentation.
 

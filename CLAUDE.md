@@ -1,5 +1,7 @@
 # CLAUDE.md — qa-playbook
 
+> **Archived 2026-05-23.** This repo is frozen — editing/syncing instructions below are historical. Open the GitHub repo for read-only reference.
+
 This is the **public clone** of `github.com/anastasiiaanfimova/qa-playbook`.
 Methodology snapshots of QA skills, intentionally tool-agnostic.
 
